@@ -5,6 +5,7 @@
 
 import json
 from database.queries import get_skill
+from character.status_effects import get_status_effects_display
 
 def format_character_status(character):
     """
@@ -58,6 +59,12 @@ def format_character_status(character):
 ⚔️ 攻击力: {attack}
 🛡️ 防御力: {defense}
 🎯 状态: {battle_status}"""
+    
+    # 添加状态效果信息
+    character_id = character.get('id')
+    if character_id:
+        status_effects_text = get_status_effects_display(character_id)
+        status_text += f"\n🌟 状态效果: {status_effects_text}"
     
     # 处理冷却时间信息
     cooldown_info = format_cooldowns(character.get('status', {}))

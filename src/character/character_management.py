@@ -22,6 +22,7 @@ from database.queries import (
     remove_all_from_battle
 )
 from character.status_formatter import format_character_status, format_character_list, format_battle_participants
+from game.turn_manager import turn_manager
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -182,21 +183,128 @@ async def battle_join(update: Update, context: CallbackContext) -> None:
     args = context.args
     
     if not args or len(args) < 1:
-        await update.message.reply_text("请提供有效的角色名称。用法: /join <角色名称>")
+        await update.message.reply_text("请提供有效的角色名称。\n用法: \n/join <角色名称> - 单个加入\n/join <角色1> <角色2> <角色3> - 批量加入\n/join all [friendly|enemy] - 全部加入")
         return
+    
+    # 检查是否是批量加入所有角色
+    if args[0].lower() == "all":
+        character_type = args[1] if len(args) > 1 and args[1] in ["friendly", "enemy"] else None
+        
+        if character_type:
+            # 批量加入指定类型的角色
+            characters = get_characters_by_type(character_type, in_battle=False)
+            
+            if not characters:
+                type_name = "友方" if character_type == "friendly" else "敌方"
+                await update.message.reply_text(f"没有未参战的{type_name}角色。")
+                return
+            
+            success_count = 0
+            failed_characters = []
+            
+            for character in characters:
+                if character['health'] > 0:  # 只有活着的角色才能加入战斗
+                    if set_character_battle_status(character['id'], True):
+                        success_count += 1
+                    else:
+                        failed_characters.append(character['name'])
+            
+            type_name = "友方" if character_type == "friendly" else "敌方"
+            result_message = f"批量加入战斗完成！\n\n✅ 成功加入 {success_count} 个{type_name}角色"
+            
+            if failed_characters:
+                result_message += f"\n❌ 加入失败的角色: {', '.join(failed_characters)}"
+            
+            await update.message.reply_text(result_message)
+            return
+        else:
+            # 批量加入所有角色
+            friendly_chars = get_characters_by_type("friendly", in_battle=False)
+            enemy_chars = get_characters_by_type("enemy", in_battle=False)
+            all_chars = friendly_chars + enemy_chars
+            
+            if not all_chars:
+                await update.message.reply_text("没有未参战的角色。")
+                return
+            
+            success_count = 0
+            failed_characters = []
+            
+            for character in all_chars:
+                if character['health'] > 0:  # 只有活着的角色才能加入战斗
+                    if set_character_battle_status(character['id'], True):
+                        success_count += 1
+                    else:
+                        failed_characters.append(character['name'])
+            
+            result_message = f"批量加入战斗完成！\n\n✅ 成功加入 {success_count} 个角色"
+            
+            if failed_characters:
+                result_message += f"\n❌ 加入失败的角色: {', '.join(failed_characters)}"
+            
+            await update.message.reply_text(result_message)
+            return
+    
+    # 多个角色批量加入（通过名称列表）
+    if len(args) > 1:
+        success_characters = []
+        failed_characters = []
+        not_found_characters = []
+        dead_characters = []
+        
+        for character_name in args:
+            # 查找角色
+            character = get_character_by_name(character_name)
+            
+            if not character:
+                not_found_characters.append(character_name)
+                continue
+                
+            if character['health'] <= 0:
+                dead_characters.append(character['name'])
+                continue
+                
+            if set_character_battle_status(character['id'], True):
+                success_characters.append(character['name'])
+            else:
+                failed_characters.append(character['name'])
+        
+        # 构建结果消息
+        result_message = f"批量加入战斗完成！\n"
+        
+        if success_characters:
+            result_message += f"\n✅ 成功加入 {len(success_characters)} 个角色:\n{', '.join(success_characters)}"
+        
+        if dead_characters:
+            result_message += f"\n💀 无法加入（已死亡）:\n{', '.join(dead_characters)}"
+            
+        if not_found_characters:
+            result_message += f"\n❓ 找不到的角色:\n{', '.join(not_found_characters)}"
+            
+        if failed_characters:
+            result_message += f"\n❌ 加入失败的角色:\n{', '.join(failed_characters)}"
+        
+        await update.message.reply_text(result_message)
+        return
+    
+    # 单个角色加入战斗
+    character_name = args[0]
     
     # 尝试将参数解析为ID
     character = None
-    if args[0].isdigit():
-        character_id = int(args[0])
+    if character_name.isdigit():
+        character_id = int(character_name)
         character = get_character(character_id)
     else:
         # 如果不是ID，则按名称查找
-        character_name = " ".join(args)
         character = get_character_by_name(character_name)
     
     if not character:
         await update.message.reply_text("找不到该角色。请检查ID或名称是否正确。")
+        return
+    
+    if character['health'] <= 0:
+        await update.message.reply_text(f"角色 '{character['name']}' 已经无法战斗（生命值为0）。")
         return
     
     if set_character_battle_status(character['id'], True):
@@ -331,8 +439,22 @@ async def reset_character_status(update: Update, context: CallbackContext) -> No
 async def reset_all_characters_command(update: Update, context: CallbackContext) -> None:
     """重置所有角色状态命令"""
     count = reset_all_characters()
+    
+    # 同时重置回合计数器
+    turn_manager.reset_turn_counter()
+    
+    # 重置战斗状态（包括清除状态效果）
+    turn_manager.reset_battle()
+    
     if count > 0:
-        await update.message.reply_text(f"✅ 已重置 {count} 个角色的状态：\n• 恢复满血\n• 清除技能冷却\n• 移出战斗")
+        await update.message.reply_text(
+            f"✅ 已重置 {count} 个角色的状态：\n"
+            "• 恢复满血\n"
+            "• 清除技能冷却\n"
+            "• 移出战斗\n"
+            "• 清除状态效果\n"
+            "🔄 回合计数器已重置到第1回合"
+        )
     else:
         await update.message.reply_text("❌ 重置失败或没有角色需要重置。")
 
@@ -360,10 +482,13 @@ async def show_help(update: Update, context: CallbackContext) -> None:
     help_text += "/enemies - 查看所有敌方角色\n"
     help_text += "/show <角色名称> - 查看角色详细信息\n"
     help_text += "/join <角色名称> - 将角色加入战斗\n"
+    help_text += "/join all - 将所有角色加入战斗\n"
+    help_text += "/join all friendly - 将所有友方角色加入战斗\n"
+    help_text += "/join all enemy - 将所有敌方角色加入战斗\n"
     help_text += "/leave <角色名称> - 将角色撤出战斗\n"
     help_text += "/health <角色名称> <数值> - 修改角色生命值\n"
     help_text += "/reset <角色名称> - 重置单个角色状态\n"
-    help_text += "/reset_all - 重置所有角色状态（满血+移出战斗+清除冷却）\n"
+    help_text += "/reset_all - 重置所有角色状态（满血+移出战斗+清除冷却+清除状态效果+重置回合）\n"
     help_text += "/end_battle - 将所有角色移出战斗\n"
     help_text += "/battle - 查看当前战斗参与者\n\n"
     
@@ -371,7 +496,7 @@ async def show_help(update: Update, context: CallbackContext) -> None:
     help_text += "/attack - 发起攻击\n\n"
     
     help_text += "🎯 技能管理命令:\n"
-    help_text += "/sm, /skill_manage - 管理角色技能（添加/移除）\n"
+    help_text += "/sm <角色名称> - 管理角色技能（支持批量添加/移除）\n"
     help_text += "/skills <角色名称> - 查看角色技能\n\n"
     
     help_text += "ℹ️ 其他命令:\n"

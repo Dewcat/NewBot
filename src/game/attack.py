@@ -96,12 +96,18 @@ async def select_attacker(update: Update, context: CallbackContext) -> int:
                 
                 # 添加技能类型标识
                 effects = skill_info.get('effects', '{}')
+                skill_category = skill_info.get('skill_category', 'damage')
+                
                 try:
                     effects_dict = json.loads(effects) if isinstance(effects, str) else effects
-                    if effects_dict.get('heal'):
+                    if skill_category == 'healing':
                         skill_text += " 💚"  # 治疗技能标识
+                    elif skill_category == 'buff':
+                        skill_text += " ✨"  # buff技能标识
+                    elif skill_category == 'debuff':
+                        skill_text += " 💀"  # debuff技能标识
                     else:
-                        skill_text += " ⚔️"   # 攻击技能标识
+                        skill_text += " ⚔️"   # 伤害技能标识
                 except:
                     skill_text += " ⚔️"
         else:
@@ -152,22 +158,37 @@ async def show_target_selection(update: Update, context: CallbackContext, skill_
     attacker_id = context.user_data['attacker_id']
     attacker = get_character(attacker_id)
     
-    # 确定技能类型
+    # 确定技能类型和目标选择
     is_heal_skill = False
+    is_buff_skill = False
+    is_debuff_skill = False
+    skill_category = None
+    
     if skill_info:
         try:
             effects = skill_info.get('effects', '{}')
             effects_dict = json.loads(effects) if isinstance(effects, str) else effects
             is_heal_skill = effects_dict.get('heal', False)
+            skill_category = skill_info.get('skill_category', 'damage')
+            is_buff_skill = (skill_category == 'buff')
+            is_debuff_skill = (skill_category == 'debuff')
         except:
             pass
     
     # 根据技能类型选择目标
-    if is_heal_skill:
-        # 治疗技能：选择友方角色（包括自己）
+    if is_heal_skill or is_buff_skill:
+        # 治疗技能和纯buff技能：选择友方角色（包括自己）
         target_characters = get_characters_by_type("friendly", in_battle=True)
-        target_type_text = "治疗目标"
-        skill_name = skill_info['name'] if skill_info else "治疗"
+        if is_heal_skill:
+            target_type_text = "治疗目标"
+        else:
+            target_type_text = "增益目标"
+        skill_name = skill_info['name'] if skill_info else ("治疗" if is_heal_skill else "增益技能")
+    elif is_debuff_skill:
+        # 纯debuff技能：选择敌方角色
+        target_characters = get_characters_by_type("enemy", in_battle=True)
+        target_type_text = "减益目标"
+        skill_name = skill_info['name'] if skill_info else "减益技能"
     else:
         # 攻击技能：选择敌方角色
         target_characters = get_characters_by_type("enemy", in_battle=True)
@@ -208,73 +229,14 @@ async def show_target_selection(update: Update, context: CallbackContext, skill_
     return SELECTING_TARGET
 
 async def select_target(update: Update, context: CallbackContext) -> int:
-    """处理目标选择"""
+    """处理目标选择并执行攻击"""
     query = update.callback_query
     await query.answer()
     
     target_id = int(query.data.split('_')[1])
     context.user_data['target_id'] = target_id
     
-    target = get_character(target_id)
-    if not target:
-        await query.edit_message_text("找不到该目标。请重新开始。")
-        return ConversationHandler.END
-    
-    attacker_id = context.user_data['attacker_id']
-    skills = get_character_skills(attacker_id)
-    
-    if not skills:
-        # 如果没有技能，直接使用普通攻击
-        context.user_data['skill_id'] = None
-        return await execute_attack(update, context)
-    
-    # 创建技能选择键盘
-    keyboard = []
-    for skill in skills:
-        skill_info = get_skill(skill['id'])
-        if skill_info:
-            # 检查技能是否在冷却中
-            cooldown_remaining = get_skill_cooldown_remaining(attacker_id, skill['id'])
-            if cooldown_remaining > 0:
-                skill_text = f"🔒 {skill['name']} (冷却中: {cooldown_remaining}回合)"
-                # 冷却中的技能不可选择
-                continue
-            else:
-                skill_text = f"{skill['name']} - {skill['description']}"
-                if skill_info.get('cooldown', 0) > 0:
-                    skill_text += f" (冷却: {skill_info['cooldown']}回合)"
-        else:
-            skill_text = f"{skill['name']} - {skill['description']}"
-        
-        keyboard.append([
-            InlineKeyboardButton(skill_text, callback_data=f"skill_{skill['id']}")
-        ])
-    
-    # 如果所有技能都在冷却中，只能使用普通攻击
-    if not keyboard:
-        context.user_data['skill_id'] = None
-        return await execute_attack(update, context)
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    attacker = get_character(attacker_id)
-    
-    await query.edit_message_text(
-        f"攻击者: {attacker['name']}\n"
-        f"目标: {target['name']}\n\n"
-        f"选择要使用的技能:",
-        reply_markup=reply_markup
-    )
-    
-    return SELECTING_SKILL
-
-async def select_skill(update: Update, context: CallbackContext) -> int:
-    """处理技能选择"""
-    query = update.callback_query
-    await query.answer()
-    
-    skill_id = int(query.data.split('_')[1])
-    context.user_data['skill_id'] = skill_id
-    
+    # 直接执行攻击，因为攻击者和技能已经选择完毕
     return await execute_attack(update, context)
 
 async def execute_attack(update: Update, context: CallbackContext) -> int:
@@ -292,14 +254,14 @@ async def execute_attack(update: Update, context: CallbackContext) -> int:
         await query.edit_message_text("攻击失败：找不到攻击者或目标。")
         return ConversationHandler.END
     
-    # 验证攻击者是友方，目标是敌方
-    if attacker.get('character_type') != 'friendly' or target.get('character_type') != 'enemy':
-        await query.edit_message_text("攻击失败：只能使用友方角色攻击敌方角色。")
-        return ConversationHandler.END
-    
     # 验证攻击者和目标都在战斗中
     if not attacker.get('in_battle') or not target.get('in_battle'):
         await query.edit_message_text("攻击失败：攻击者和目标必须都在战斗中。")
+        return ConversationHandler.END
+    
+    # 验证攻击者的生命值
+    if attacker.get('health', 0) <= 0:
+        await query.edit_message_text("攻击失败：攻击者已经无法战斗。")
         return ConversationHandler.END
     
     # 获取技能信息（如果有）
@@ -327,8 +289,36 @@ def execute_skill_effect(attacker, target, skill_info):
     """执行技能效果并返回结果消息"""
     skill_name = skill_info['name'] if skill_info else "普通攻击"
     
-    result_message = f"⚔️ 战斗结果 ⚔️\n\n"
-    result_message += f"{attacker['name']} 使用 {skill_name} 攻击了 {target['name']}！\n\n"
+    # 判断技能类型
+    is_heal_skill = False
+    is_buff_skill = False
+    is_debuff_skill = False
+    skill_category = None
+    
+    if skill_info:
+        try:
+            effects = skill_info.get('effects', '{}')
+            effects_dict = json.loads(effects) if isinstance(effects, str) else effects
+            is_heal_skill = effects_dict.get('heal', False)
+            skill_category = skill_info.get('skill_category', 'damage')
+            is_buff_skill = (skill_category == 'buff')
+            is_debuff_skill = (skill_category == 'debuff')
+        except:
+            pass
+    
+    # 根据技能类型设置不同的描述
+    if is_heal_skill:
+        result_message = f"💚 治疗结果 💚\n\n"
+        result_message += f"{attacker['name']} 使用 {skill_name} 治疗了 {target['name']}！\n\n"
+    elif is_buff_skill:
+        result_message = f"✨ 强化结果 ✨\n\n"
+        result_message += f"{attacker['name']} 使用 {skill_name} 强化了 {target['name']}！\n\n"
+    elif is_debuff_skill:
+        result_message = f"💀 削弱结果 💀\n\n"
+        result_message += f"{attacker['name']} 使用 {skill_name} 削弱了 {target['name']}！\n\n"
+    else:
+        result_message = f"⚔️ 战斗结果 ⚔️\n\n"
+        result_message += f"{attacker['name']} 使用 {skill_name} 攻击了 {target['name']}！\n\n"
     
     # 使用技能效果系统执行攻击
     skill_result = skill_registry.execute_skill(attacker, target, skill_info)
@@ -443,11 +433,20 @@ async def enemy_select_attacker(update: Update, context: CallbackContext) -> int
             continue
         else:
             # 判断技能类型并添加图标
+            skill_info = get_skill(skill['id'])
             try:
                 effects = skill.get('effects', '{}')
                 effects_dict = json.loads(effects) if isinstance(effects, str) else effects
-                is_heal = effects_dict.get('heal', False)
-                skill_type_icon = "💚" if is_heal else "⚔️"
+                skill_category = skill_info.get('skill_category', 'damage') if skill_info else 'damage'
+                
+                if effects_dict.get('heal', False):
+                    skill_type_icon = "💚"  # 治疗技能
+                elif skill_category == 'buff':
+                    skill_type_icon = "✨"  # buff技能
+                elif skill_category == 'debuff':
+                    skill_type_icon = "💀"  # debuff技能
+                else:
+                    skill_type_icon = "⚔️"  # 伤害技能
             except:
                 skill_type_icon = "⚔️"
             
@@ -497,22 +496,37 @@ async def enemy_show_target_selection(update: Update, context: CallbackContext, 
     attacker_id = context.user_data['enemy_attacker_id']
     attacker = get_character(attacker_id)
     
-    # 确定技能类型
+    # 确定技能类型和目标选择
     is_heal_skill = False
+    is_buff_skill = False
+    is_debuff_skill = False
+    skill_category = None
+    
     if skill_info:
         try:
             effects = skill_info.get('effects', '{}')
             effects_dict = json.loads(effects) if isinstance(effects, str) else effects
             is_heal_skill = effects_dict.get('heal', False)
+            skill_category = skill_info.get('skill_category', 'damage')
+            is_buff_skill = (skill_category == 'buff')
+            is_debuff_skill = (skill_category == 'debuff')
         except:
             pass
     
     # 根据技能类型选择目标
-    if is_heal_skill:
-        # 治疗技能：选择敌方角色（包括自己）
+    if is_heal_skill or is_buff_skill:
+        # 治疗技能和纯buff技能：选择敌方角色（包括自己）
         target_characters = get_characters_by_type("enemy", in_battle=True)
-        target_type_text = "治疗目标"
-        skill_name = skill_info['name'] if skill_info else "治疗"
+        if is_heal_skill:
+            target_type_text = "治疗目标"
+        else:
+            target_type_text = "增益目标"
+        skill_name = skill_info['name'] if skill_info else ("治疗" if is_heal_skill else "增益技能")
+    elif is_debuff_skill:
+        # 纯debuff技能：选择友方角色
+        target_characters = get_characters_by_type("friendly", in_battle=True)
+        target_type_text = "减益目标"
+        skill_name = skill_info['name'] if skill_info else "减益技能"
     else:
         # 攻击技能：选择友方角色
         target_characters = get_characters_by_type("friendly", in_battle=True)

@@ -44,6 +44,109 @@ def roll_dice(num_dice, faces):
     """投掷指定数量和面数的骰子"""
     return sum(random.randint(1, faces) for _ in range(num_dice))
 
+def calculate_race_bonus(special_damage_tags, target_race_tags):
+    """
+    计算种族特攻加成
+    
+    Args:
+        special_damage_tags (dict): 技能的特攻标签，如 {"human": 1.5, "dragon": 2.0}
+        target_race_tags (list): 目标的种族标签，如 ["human", "warrior"]
+        
+    Returns:
+        float: 特攻倍率（1.0为无加成）
+    """
+    if not special_damage_tags or not target_race_tags:
+        return 1.0
+    
+    max_bonus = 1.0
+    for race in target_race_tags:
+        if race in special_damage_tags:
+            bonus = special_damage_tags[race]
+            max_bonus = max(max_bonus, bonus)
+    
+    return max_bonus
+
+def calculate_resistance_reduction(damage_type, target_resistances):
+    """
+    计算抗性减伤
+    
+    Args:
+        damage_type (str): 伤害类型 ('physical' 或 'magic')
+        target_resistances (dict): 目标抗性，如 {"physical": 0.2, "magic": 0.1}
+        
+    Returns:
+        float: 抗性减伤倍率（1.0为无减伤，0.5为50%减伤）
+    """
+    resistance = target_resistances.get(damage_type, 0.0)
+    # 抗性值直接作为减伤比例，如0.3表示减伤30%
+    reduction_multiplier = 1.0 - min(resistance, 0.9)  # 最多减伤90%
+    return max(0.1, reduction_multiplier)  # 最少造成10%伤害
+
+def calculate_advanced_damage(skill, attacker, target):
+    """
+    计算带有伤害类型、抗性和特攻的高级伤害系统
+    
+    Args:
+        skill (dict): 技能信息，包含damage_formula, damage_type, special_damage_tags等
+        attacker (dict): 攻击者信息，包含attack等属性
+        target (dict): 目标信息，包含defense, physical_resistance, magic_resistance, race_tags等
+        
+    Returns:
+        tuple: (final_damage, damage_details)
+    """
+    # 1. 基础伤害计算
+    base_damage, dice_detail = calculate_damage_from_formula(skill.get('damage_formula', '1d6'))
+    
+    # 2. 攻防修正
+    attack_defense_modifier = calculate_attack_defense_modifier(
+        attacker.get('attack', 10), 
+        target.get('defense', 5)
+    )
+    
+    # 3. 种族特攻加成
+    special_damage_tags = json.loads(skill.get('special_damage_tags', '{}'))
+    target_race_tags = json.loads(target.get('race_tags', '[]'))
+    race_bonus = calculate_race_bonus(special_damage_tags, target_race_tags)
+    
+    # 4. 抗性减伤
+    damage_type = skill.get('damage_type', 'physical')
+    target_resistances = {
+        'physical': target.get('physical_resistance', 0.0),
+        'magic': target.get('magic_resistance', 0.0)
+    }
+    resistance_reduction = calculate_resistance_reduction(damage_type, target_resistances)
+    
+    # 5. 计算最终伤害
+    final_damage = int(base_damage * attack_defense_modifier * race_bonus * resistance_reduction)
+    final_damage = max(1, final_damage)  # 最少造成1点伤害
+    
+    # 6. 构建伤害详情文本
+    damage_details = []
+    damage_details.append(f"基础伤害: {dice_detail}")
+    
+    if attack_defense_modifier != 1.0:
+        # 转换为百分比显示，如1.1显示为+10%，0.9显示为-10%
+        percent_change = (attack_defense_modifier - 1.0) * 100
+        if percent_change > 0:
+            damage_details.append(f"攻防: +{percent_change:.0f}%")
+        else:
+            damage_details.append(f"攻防: {percent_change:.0f}%")
+    
+    if race_bonus > 1.0:
+        race_name = next((race for race in target_race_tags if race in special_damage_tags), "未知")
+        damage_details.append(f"特攻({race_name}): ×{race_bonus:.1f}")
+    
+    if resistance_reduction < 1.0:
+        # 直接使用原始抗性值计算百分比，避免浮点数精度问题
+        original_resistance = target_resistances.get(damage_type, 0.0)
+        resistance_percent = round(original_resistance * 100)
+        damage_type_name = "物理" if damage_type == "physical" else "魔法"
+        damage_details.append(f"{damage_type_name}抗性: -{resistance_percent}%")
+    
+    damage_details.append(f"原始伤害: {final_damage}")
+    
+    return final_damage, " → ".join(damage_details)
+
 def calculate_damage_from_formula(formula):
     """
     根据骰子公式计算伤害值

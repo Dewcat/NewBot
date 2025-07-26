@@ -2,7 +2,20 @@ import os
 import httpx
 import logging
 from dotenv import load_dotenv
-from telegram.ext import Application, CommandHandler, CallbackContext, ConversationHandler, MessageHandler, filters
+from telegram.ext imp🌟 状态效果系统:
+技能分为四种类型：伤害、治疗、增益(buff)、减益(debuff)
+
+📖 技能类型说明:
+- 伤害技能：造成伤害，可附带状态效果
+- 治疗技能：恢复生命，不受攻防影响，可附带增益效果
+- 增益技能：纯buff效果，可选择友方目标
+- 减益技能：纯debuff效果，可选择敌方目标
+
+🎯 状态效果目标规则:
+- self_buff：施加给施法者自己的增益效果
+- self_debuff：施加给施法者自己的减益效果
+- buff：施加给目标的增益效果
+- debuff：施加给目标的减益效果ication, CommandHandler, CallbackContext, ConversationHandler, MessageHandler, filters
 from telegram import Update
 from telegram.request import HTTPXRequest  # 使用 HTTPXRequest 替代原来的 Request
 from character.character_management import get_character_management_handlers
@@ -82,7 +95,7 @@ async def help_command(update: Update, context: CallbackContext) -> None:
 - 战斗中生命值为0的角色会自动移出战斗
 - 技能选择会根据类型自动过滤目标
 - ⚔️ 物理技能受物理抗性影响
-- 🔮 魔法技能受魔法抗性影响
+- � 魔法技能受魔法抗性影响
 - 🏷️ 种族标签影响特攻伤害加成
 - 支持批量操作：技能管理和战斗加入都支持批量处理
 
@@ -95,19 +108,13 @@ async def help_command(update: Update, context: CallbackContext) -> None:
 🌟 状态效果系统:
 技能分为四种类型：伤害、治疗、增益(buff)、减益(debuff)
 
-📖 技能类型说明:
+� 技能类型说明:
 - 伤害技能：造成伤害，可附带状态效果
-- 治疗技能：恢复生命，不受攻防影响，可附带增益效果
-- 增益技能：纯buff效果，可选择友方目标
-- 减益技能：纯debuff效果，可选择敌方目标
+- 治疗技能：恢复生命，可附带增益效果
+- 增益技能：纯buff效果，可选择目标
+- 减益技能：纯debuff效果，可选择目标
 
-🎯 状态效果目标规则:
-- self_buff：施加给施法者自己的增益效果
-- self_debuff：施加给施法者自己的减益效果
-- buff：施加给目标的增益效果
-- debuff：施加给目标的减益效果
-
-💪 增益效果:
+�💪 增益效果:
 - 强壮：攻击伤害+(层数×10%)
 - 呼吸法：暴击率+强度×1%，暴击伤害120%
 - 守护：受到伤害-(层数×10%)
@@ -122,10 +129,9 @@ async def help_command(update: Update, context: CallbackContext) -> None:
 - 易伤：受到伤害+(层数×10%)
 
 🎯 技能示例:
-- 强壮打击：伤害+给自己强壮(self_buff)
-- 守护祝福：纯buff，给选中目标守护(buff)
-- 虚弱诅咒：纯debuff，给选中目标虚弱(debuff)
-- 狂怒攻击：伤害+给自己强壮(self_buff)
+- 强壮打击：伤害+给自己强壮
+- 守护祝福：纯buff，给选中目标守护
+- 虚弱诅咒：纯debuff，给选中目标虚弱
 
 📝 批量加入示例:
 /join 艾丽丝 鲍勃 查理 - 批量加入多个角色
@@ -161,9 +167,7 @@ async def end_turn_command(update: Update, context: CallbackContext) -> None:
 # 添加命令处理器
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("help", help_command))
-application.add_handler(CommandHandler("end_turn", end_turn_command))
-
-# 添加角色管理处理器
+application.add_handler(CommandHandler("end_turn", end_turn_command))# 添加角色管理处理器
 for handler in get_character_management_handlers():
     application.add_handler(handler)
 
