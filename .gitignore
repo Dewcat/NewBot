@@ -1,0 +1,27 @@
+# 环境变量和敏感信息
+.env
+
+# Python缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虚拟环境
+venv/
+env/
+ENV/
+
+# 数据库文件
+data/
+
+# 日志文件
+*.log
+
+# IDE文件
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 其他
+.DS_Store
