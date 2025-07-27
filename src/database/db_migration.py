@@ -33,6 +33,7 @@ def run_migrations():
             ("add_status_effects_system", add_status_effects_system),
             ("update_buff_debuff_skills", update_buff_debuff_skills),
             ("update_status_effect_targeting", update_status_effect_targeting),
+            ("add_action_system", add_action_system),
             # 将来可以在这里添加更多迁移
         ]
         
@@ -467,4 +468,86 @@ def update_status_effect_targeting(conn):
         logger.info("✓ 状态效果目标定义更新完成")
     except Exception as e:
         logger.error(f"更新状态效果目标定义时出错: {e}")
+        conn.rollback()
+
+def add_action_system(conn):
+    """添加角色行动次数系统"""
+    cursor = conn.cursor()
+    
+    try:
+        # 添加行动次数字段
+        cursor.execute("""
+            ALTER TABLE characters 
+            ADD COLUMN actions_per_turn INTEGER DEFAULT 1
+        """)
+        
+        cursor.execute("""
+            ALTER TABLE characters 
+            ADD COLUMN current_actions INTEGER DEFAULT 1
+        """)
+        
+        # 为现有角色设置默认值
+        cursor.execute("""
+            UPDATE characters 
+            SET actions_per_turn = 1, current_actions = 1 
+            WHERE actions_per_turn IS NULL OR current_actions IS NULL
+        """)
+        
+        conn.commit()
+        logger.info("✅ 已添加角色行动次数系统")
+    except Exception as e:
+        logger.error(f"添加行动次数系统时出错: {e}")
+        conn.rollback()
+
+def add_haste_cooldown_skills(conn):
+    """添加加速和冷却缩减技能"""
+    cursor = conn.cursor()
+    
+    try:
+        logger.info("开始添加加速和冷却缩减技能...")
+        
+        # 添加新技能
+        new_skills = [
+            # 加速技能
+            (29, '急速术', 'buff', '0', 'magic', '{}', 4, 
+             '{"buff": {"type": "haste", "intensity": 1, "duration": 3}}',
+             '为目标提供3回合的加速效果，每回合增加1次行动'),
+            
+            (30, '超级加速', 'buff', '0', 'magic', '{}', 6, 
+             '{"buff": {"type": "haste", "intensity": 2, "duration": 2}}',
+             '为目标提供2回合的强力加速效果，每回合增加2次行动'),
+            
+            # 冷却缩减技能  
+            (31, '时间回溯', 'buff', '0', 'magic', '{}', 5,
+             '{"buff": {"type": "cooldown_reduction", "intensity": 2, "duration": 1}}',
+             '立即减少目标所有技能2次行动冷却时间'),
+             
+            (32, '神速冷却', 'buff', '0', 'magic', '{}', 8,
+             '{"buff": {"type": "cooldown_reduction", "intensity": 3, "duration": 1}}',
+             '立即减少目标所有技能3次行动冷却时间'),
+             
+            # 自我加速技能
+            (33, '疾风步', 'buff', '0', 'none', '{}', 3,
+             '{"self_buff": {"type": "haste", "intensity": 1, "duration": 2}}',
+             '为自己提供2回合的加速效果，每回合增加1次行动'),
+             
+            # 自我冷却缩减技能
+            (34, '专注冥想', 'buff', '0', 'magic', '{}', 4,
+             '{"self_buff": {"type": "cooldown_reduction", "intensity": 1, "duration": 1}}',
+             '为自己减少1次行动所有技能冷却时间')
+        ]
+        
+        for skill_data in new_skills:
+            skill_id, name, category, formula, damage_type, special_tags, cooldown, effects, description = skill_data
+            cursor.execute("""
+                INSERT OR IGNORE INTO skills 
+                (id, name, skill_category, damage_formula, damage_type, special_damage_tags, cooldown, effects, description) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (skill_id, name, category, formula, damage_type, special_tags, cooldown, effects, description))
+            logger.info(f"✓ 添加技能: {name} (ID: {skill_id})")
+        
+        conn.commit()
+        logger.info("✅ 已添加加速和冷却缩减技能")
+    except Exception as e:
+        logger.error(f"添加加速和冷却缩减技能时出错: {e}")
         conn.rollback()

@@ -53,9 +53,8 @@ def get_character(character_id):
         if not character:
             return None
         
-        # 将结果转换为字典
-        columns = [col[0] for col in cursor.description]
-        character_dict = dict(zip(columns, character))
+        # 转换为字典
+        character_dict = dict(character)
         
         # 解析状态JSON
         if 'status' in character_dict and character_dict['status']:
@@ -111,9 +110,8 @@ def get_characters_by_type(character_type, in_battle=None):
         
         result = []
         for char in characters:
-            # 获取列名
-            columns = [col[0] for col in cursor.description]
-            char_dict = dict(zip(columns, char))
+            # 转换为字典
+            char_dict = dict(char)
             
             # 解析status JSON
             if 'status' in char_dict and char_dict['status']:
@@ -220,9 +218,8 @@ def get_character_by_name(name, character_type=None):
         if not character:
             return None
         
-        # 将结果转换为字典
-        columns = [col[0] for col in cursor.description]
-        character_dict = dict(zip(columns, character))
+        # 转换为字典
+        character_dict = dict(character)
         
         # 解析状态JSON
         if 'status' in character_dict and character_dict['status']:
@@ -281,19 +278,26 @@ def reset_character(character_id):
     cursor = conn.cursor()
     
     try:
-        # 获取角色的最大健康值
-        cursor.execute("SELECT max_health FROM characters WHERE id = ?", (character_id,))
+        # 获取角色的最大健康值和每回合行动次数
+        cursor.execute("SELECT max_health, actions_per_turn FROM characters WHERE id = ?", (character_id,))
         result = cursor.fetchone()
         if not result:
             return False
         
-        max_health = result[0]
+        max_health, actions_per_turn = result
         
-        # 重置角色状态
+        # 重置角色状态：恢复满血、清空status字段、恢复行动次数
         cursor.execute(
-            "UPDATE characters SET health = ?, status = '{}' WHERE id = ?",
-            (max_health, character_id)
+            "UPDATE characters SET health = ?, status = '{}', current_actions = ? WHERE id = ?",
+            (max_health, actions_per_turn, character_id)
         )
+        
+        # 清除状态效果表中的所有buff/debuff
+        cursor.execute("""
+            DELETE FROM character_status_effects
+            WHERE character_id = ?
+        """, (character_id,))
+        
         conn.commit()
         return True
     except Exception as e:
@@ -544,8 +548,7 @@ def get_skill(skill_id):
         skill = cursor.fetchone()
         
         if skill:
-            columns = [col[0] for col in cursor.description]
-            skill_dict = dict(zip(columns, skill))
+            skill_dict = dict(skill)
             
             # 确保新字段有默认值
             if 'damage_formula' not in skill_dict:
@@ -564,13 +567,13 @@ def get_skill(skill_id):
         conn.close()
 
 def reset_all_characters():
-    """重置所有角色状态：恢复满血、清除冷却、移出战斗"""
+    """重置所有角色状态：恢复满血、清除冷却、移出战斗、清除所有buff/debuff"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
-        # 恢复所有角色的生命值到最大值
-        cursor.execute("UPDATE characters SET health = max_health")
+        # 恢复所有角色的生命值到最大值，重置行动次数
+        cursor.execute("UPDATE characters SET health = max_health, current_actions = actions_per_turn")
         
         # 清除所有角色的状态（包括冷却时间）
         cursor.execute("UPDATE characters SET status = '{}'")
@@ -578,13 +581,16 @@ def reset_all_characters():
         # 将所有角色移出战斗
         cursor.execute("UPDATE characters SET in_battle = 0")
         
+        # 清除状态效果表中的所有buff/debuff
+        cursor.execute("DELETE FROM character_status_effects")
+        
         conn.commit()
         
         # 获取影响的角色数量
         cursor.execute("SELECT COUNT(*) FROM characters")
         count = cursor.fetchone()[0]
         
-        logger.info(f"已重置 {count} 个角色的状态")
+        logger.info(f"已重置 {count} 个角色的状态，清除了所有状态效果")
         return count
     except Exception as e:
         logger.error(f"重置角色状态时出错: {e}")
@@ -612,5 +618,135 @@ def remove_all_from_battle():
         logger.error(f"移出战斗时出错: {e}")
         conn.rollback()
         return 0
+    finally:
+        conn.close()
+
+def use_character_action(character_id):
+    """消耗角色的一次行动"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            UPDATE characters 
+            SET current_actions = current_actions - 1
+            WHERE id = ? AND current_actions > 0
+        """, (character_id,))
+        
+        if cursor.rowcount > 0:
+            conn.commit()
+            return True
+        else:
+            return False
+    except Exception as e:
+        logger.error(f"消耗行动次数时出错: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+def restore_character_actions():
+    """恢复所有角色的行动次数"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            UPDATE characters 
+            SET current_actions = actions_per_turn
+        """)
+        conn.commit()
+        
+        # 获取影响的角色数量
+        affected_count = cursor.rowcount
+        logger.info(f"已恢复 {affected_count} 个角色的行动次数")
+        return affected_count
+    except Exception as e:
+        logger.error(f"恢复行动次数时出错: {e}")
+        conn.rollback()
+        return 0
+    finally:
+        conn.close()
+
+def get_characters_with_actions(character_type=None):
+    """获取还有行动次数的角色
+    
+    Args:
+        character_type: 角色类型过滤 ('friendly', 'enemy', 或 None 表示所有)
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        if character_type:
+            cursor.execute("""
+                SELECT * FROM characters 
+                WHERE in_battle = 1 AND current_actions > 0 AND character_type = ?
+                ORDER BY name
+            """, (character_type,))
+        else:
+            cursor.execute("""
+                SELECT * FROM characters 
+                WHERE in_battle = 1 AND current_actions > 0
+                ORDER BY name
+            """)
+        
+        characters = []
+        for row in cursor.fetchall():
+            character = dict(row)
+            characters.append(character)
+        
+        return characters
+    except Exception as e:
+        logger.error(f"获取有行动次数角色时出错: {e}")
+        return []
+    finally:
+        conn.close()
+
+def set_character_actions_per_turn(character_id, actions_per_turn):
+    """设置角色每回合行动次数"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            UPDATE characters 
+            SET actions_per_turn = ?, current_actions = ?
+            WHERE id = ?
+        """, (actions_per_turn, actions_per_turn, character_id))
+        
+        if cursor.rowcount > 0:
+            conn.commit()
+            return True
+        else:
+            return False
+    except Exception as e:
+        logger.error(f"设置行动次数时出错: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+def update_character_actions(character_id, current_actions):
+    """更新角色当前行动次数"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            UPDATE characters 
+            SET current_actions = ?
+            WHERE id = ?
+        """, (current_actions, character_id))
+        
+        if cursor.rowcount > 0:
+            conn.commit()
+            return True
+        else:
+            return False
+    except Exception as e:
+        logger.error(f"更新行动次数时出错: {e}")
+        conn.rollback()
+        return False
     finally:
         conn.close()

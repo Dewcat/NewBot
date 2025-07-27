@@ -19,7 +19,9 @@ def ensure_data_dir():
 # 获取数据库连接
 def get_db_connection():
     ensure_data_dir()
-    return sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row  # 设置行工厂，让行对象表现得像字典
+    return conn
 
 # 初始化数据库表
 def init_db():

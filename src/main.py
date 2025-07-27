@@ -10,6 +10,7 @@ from character.race_management import get_race_management_handlers
 from skill.skill_management import get_skill_management_handlers
 from game.attack import get_attack_conv_handler, get_enemy_attack_conv_handler
 from game.turn_manager import turn_manager
+from database.queries import get_character_by_name, set_character_actions_per_turn
 from database.db_migration import run_migrations
 
 # 配置日志
@@ -100,6 +101,7 @@ async def help_command(update: Update, context: CallbackContext) -> None:
 - 治疗技能：恢复生命，不受攻防影响，可附带增益效果
 - 增益技能：纯buff效果，可选择友方目标
 - 减益技能：纯debuff效果，可选择敌方目标
+- 自我技能：只对自己生效，无需选择目标
 
 🎯 状态效果目标规则:
 - self_buff：施加给施法者自己的增益效果
@@ -126,6 +128,8 @@ async def help_command(update: Update, context: CallbackContext) -> None:
 - 守护祝福：纯buff，给选中目标守护(buff)
 - 虚弱诅咒：纯debuff，给选中目标虚弱(debuff)
 - 狂怒攻击：伤害+给自己强壮(self_buff)
+- 疾风步：自我技能，无需选择目标，直接为自己加速(self) 🧘
+- 专注冥想：自我技能，无需选择目标，直接减少自己技能冷却(self) 🧘
 
 📝 批量加入示例:
 /join 艾丽丝 鲍勃 查理 - 批量加入多个角色
@@ -139,6 +143,20 @@ async def help_command(update: Update, context: CallbackContext) -> None:
 /start - 启动机器人
 /help - 显示此帮助信息
 /cancel - 取消当前操作
+/set_actions <角色名> <次数> - 设置角色每回合行动次数(1-5)
+
+⚡ 行动系统:
+- 每个角色每回合有固定的行动次数(默认1次)
+- 使用技能会消耗1次行动
+- 行动次数耗尽的角色无法被选择攻击
+- 回合结束时恢复所有角色的行动次数
+
+🕐 冷却系统:
+- 技能使用后进入冷却状态
+- 每次使用任意技能会减少所有技能1次行动的冷却时间
+- 冷却时间以"次行动"计算，而不是回合
+- 加速效果：立即在当前回合增加行动次数，后续回合继续生效
+- 冷却缩减：立即减少所有技能的冷却时间
     """
     await update.message.reply_text(help_text)
 
@@ -158,10 +176,47 @@ async def end_turn_command(update: Update, context: CallbackContext) -> None:
     except Exception as e:
         await update.message.reply_text(f"处理回合结束时出错: {str(e)}")
 
+async def set_actions_command(update: Update, context: CallbackContext) -> None:
+    """设置角色每回合行动次数"""
+    args = context.args
+    
+    if not args or len(args) < 2:
+        await update.message.reply_text(
+            "用法: /set_actions <角色名称> <行动次数>\n"
+            "例如: /set_actions 艾丽丝 2"
+        )
+        return
+    
+    try:
+        character_name = " ".join(args[:-1])
+        actions_per_turn = int(args[-1])
+        
+        if actions_per_turn < 1 or actions_per_turn > 5:
+            await update.message.reply_text("行动次数必须在1-5之间。")
+            return
+        
+        character = get_character_by_name(character_name)
+        if not character:
+            await update.message.reply_text(f"找不到名为 '{character_name}' 的角色。")
+            return
+        
+        if set_character_actions_per_turn(character['id'], actions_per_turn):
+            await update.message.reply_text(
+                f"✅ 已设置角色 '{character_name}' 的每回合行动次数为 {actions_per_turn}。"
+            )
+        else:
+            await update.message.reply_text("设置失败，请稍后再试。")
+    
+    except ValueError:
+        await update.message.reply_text("行动次数必须是一个有效的数字。")
+    except Exception as e:
+        await update.message.reply_text(f"设置时出错: {str(e)}")
+
 # 添加命令处理器
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("help", help_command))
 application.add_handler(CommandHandler("end_turn", end_turn_command))
+application.add_handler(CommandHandler("set_actions", set_actions_command))
 
 # 添加角色管理处理器
 for handler in get_character_management_handlers():

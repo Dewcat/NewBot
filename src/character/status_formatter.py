@@ -28,6 +28,8 @@ def format_character_status(character):
     defense = character.get('defense', 0)
     char_type = character.get('character_type', 'unknown')
     in_battle = character.get('in_battle', 0)
+    actions_per_turn = character.get('actions_per_turn', 1)
+    current_actions = character.get('current_actions', 1)
     
     # 角色类型显示
     type_text = "友方角色" if char_type == "friendly" else "敌方角色"
@@ -58,7 +60,8 @@ def format_character_status(character):
 {health_emoji} 生命值: {health}/{max_health} ({health_percent:.0f}%)
 ⚔️ 攻击力: {attack}
 🛡️ 防御力: {defense}
-🎯 状态: {battle_status}"""
+🎯 状态: {battle_status}
+⚡ 行动次数: {current_actions}/{actions_per_turn}"""
     
     # 添加状态效果信息
     character_id = character.get('id')
@@ -102,7 +105,7 @@ def format_cooldowns(status):
                 skill = get_skill(int(skill_id_str))
                 skill_name = skill['name'] if skill else f"技能{skill_id_str}"
                 
-                cooldown_lines.append(f"  🔒 {skill_name}: 冷却中，还需 {remaining_turns} 回合")
+                cooldown_lines.append(f"  🔒 {skill_name}: 冷却中，还需 {remaining_turns} 次行动")
         
         if not cooldown_lines:
             return "所有技能可用 ✅"

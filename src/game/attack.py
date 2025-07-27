@@ -17,7 +17,9 @@ from database.queries import (
     get_character_skills,
     update_character_health,
     record_battle,
-    get_skill
+    get_skill,
+    use_character_action,
+    get_characters_with_actions
 )
 from skill.skill_effects import skill_registry
 from game.damage_calculator import is_skill_on_cooldown, get_skill_cooldown_remaining
@@ -34,13 +36,13 @@ SELECTING_TARGET = 3
 
 async def start_attack(update: Update, context: CallbackContext) -> int:
     """开始攻击流程"""
-    # 获取在战斗中的友方角色
-    friendly_characters = get_characters_by_type("friendly", in_battle=True)
+    # 获取有行动次数的友方角色
+    friendly_characters = get_characters_with_actions("friendly")
     
     if not friendly_characters:
         await update.message.reply_text(
-            "没有任何在战斗中的友方角色可以用来攻击。\n"
-            "使用 /cc 创建一个角色，然后用 /join <角色名称> 将其加入战斗。"
+            "没有任何有行动次数的友方角色可以用来攻击。\n"
+            "如果所有角色都已耗尽行动次数，请使用 /end_turn 结束回合。"
         )
         return ConversationHandler.END
     
@@ -86,13 +88,13 @@ async def select_attacker(update: Update, context: CallbackContext) -> int:
             # 检查技能是否在冷却中
             cooldown_remaining = get_skill_cooldown_remaining(attacker_id, skill['id'])
             if cooldown_remaining > 0:
-                skill_text = f"🔒 {skill['name']} (冷却中: {cooldown_remaining}回合)"
+                skill_text = f"🔒 {skill['name']} (冷却中: {cooldown_remaining}次行动)"
                 # 冷却中的技能不可选择
                 continue
             else:
                 skill_text = f"{skill['name']}"
                 if skill_info.get('cooldown', 0) > 0:
-                    skill_text += f" (冷却: {skill_info['cooldown']}回合)"
+                    skill_text += f" (冷却: {skill_info['cooldown']}次行动)"
                 
                 # 添加技能类型标识
                 effects = skill_info.get('effects', '{}')
@@ -106,6 +108,8 @@ async def select_attacker(update: Update, context: CallbackContext) -> int:
                         skill_text += " ✨"  # buff技能标识
                     elif skill_category == 'debuff':
                         skill_text += " 💀"  # debuff技能标识
+                    elif skill_category == 'self':
+                        skill_text += " 🧘"  # 自我技能标识
                     else:
                         skill_text += " ⚔️"   # 伤害技能标识
                 except:
@@ -139,7 +143,7 @@ async def select_skill(update: Update, context: CallbackContext) -> int:
     attacker_id = context.user_data['attacker_id']
     if is_skill_on_cooldown(attacker_id, skill_id):
         cooldown_remaining = get_skill_cooldown_remaining(attacker_id, skill_id)
-        await query.edit_message_text(f"技能还在冷却中，剩余 {cooldown_remaining} 回合。")
+        await query.edit_message_text(f"技能还在冷却中，剩余 {cooldown_remaining} 次行动。")
         return ConversationHandler.END
     
     skill_info = get_skill(skill_id)
@@ -162,6 +166,7 @@ async def show_target_selection(update: Update, context: CallbackContext, skill_
     is_heal_skill = False
     is_buff_skill = False
     is_debuff_skill = False
+    is_self_skill = False
     skill_category = None
     
     if skill_info:
@@ -172,8 +177,30 @@ async def show_target_selection(update: Update, context: CallbackContext, skill_
             skill_category = skill_info.get('skill_category', 'damage')
             is_buff_skill = (skill_category == 'buff')
             is_debuff_skill = (skill_category == 'debuff')
+            is_self_skill = (skill_category == 'self')
         except:
             pass
+    
+    # 如果是self技能，直接对自己生效，跳过目标选择
+    if is_self_skill:
+        # 验证攻击者状态
+        if not attacker.get('in_battle'):
+            await query.edit_message_text("技能使用失败：施法者必须在战斗中。")
+            return ConversationHandler.END
+        
+        if attacker.get('health', 0) <= 0:
+            await query.edit_message_text("技能使用失败：施法者已经无法战斗。")
+            return ConversationHandler.END
+        
+        # 直接对自己使用技能
+        result_message = execute_skill_effect(attacker, attacker, skill_info)
+        
+        # 消耗攻击者的行动次数
+        if not use_character_action(attacker['id']):
+            result_message += "\n⚠️ 警告：消耗行动次数失败"
+        
+        await query.edit_message_text(result_message)
+        return ConversationHandler.END
     
     # 根据技能类型选择目标
     if is_heal_skill or is_buff_skill:
@@ -270,7 +297,7 @@ async def execute_attack(update: Update, context: CallbackContext) -> int:
         # 先检查技能是否在冷却中
         if is_skill_on_cooldown(attacker_id, skill_id):
             cooldown_remaining = get_skill_cooldown_remaining(attacker_id, skill_id)
-            await query.edit_message_text(f"攻击失败：技能还在冷却中，剩余 {cooldown_remaining} 回合。")
+            await query.edit_message_text(f"攻击失败：技能还在冷却中，剩余 {cooldown_remaining} 次行动。")
             return ConversationHandler.END
         
         skill_info = get_skill(skill_id)
@@ -280,6 +307,10 @@ async def execute_attack(update: Update, context: CallbackContext) -> int:
     
     # 执行技能效果
     result_message = execute_skill_effect(attacker, target, skill_info)
+    
+    # 消耗攻击者的行动次数
+    if not use_character_action(attacker['id']):
+        result_message += "\n⚠️ 警告：消耗行动次数失败"
     
     await query.edit_message_text(result_message)
     
@@ -293,6 +324,7 @@ def execute_skill_effect(attacker, target, skill_info):
     is_heal_skill = False
     is_buff_skill = False
     is_debuff_skill = False
+    is_self_skill = False
     skill_category = None
     
     if skill_info:
@@ -303,11 +335,15 @@ def execute_skill_effect(attacker, target, skill_info):
             skill_category = skill_info.get('skill_category', 'damage')
             is_buff_skill = (skill_category == 'buff')
             is_debuff_skill = (skill_category == 'debuff')
+            is_self_skill = (skill_category == 'self')
         except:
             pass
     
     # 根据技能类型设置不同的描述
-    if is_heal_skill:
+    if is_self_skill:
+        result_message = f"🧘 自我强化结果 🧘\n\n"
+        result_message += f"{attacker['name']} 使用 {skill_name} 强化了自己！\n\n"
+    elif is_heal_skill:
         result_message = f"💚 治疗结果 💚\n\n"
         result_message += f"{attacker['name']} 使用 {skill_name} 治疗了 {target['name']}！\n\n"
     elif is_buff_skill:
@@ -326,13 +362,18 @@ def execute_skill_effect(attacker, target, skill_info):
     # 添加技能效果描述
     result_message += skill_result['result_text'] + "\n\n"
     
-    # 获取最新的目标状态
-    target = get_character(target['id'])
-    
-    if target['health'] <= 0:
-        result_message += f"💀 {target['name']} 已被击倒！"
+    # 根据技能类型决定是否显示生命值状态
+    if not (is_self_skill or is_buff_skill or is_debuff_skill):
+        # 只有攻击和治疗技能才显示生命值状态
+        target = get_character(target['id'])
+        
+        if target['health'] <= 0:
+            result_message += f"💀 {target['name']} 已被击倒！"
+        else:
+            result_message += f"❤️ {target['name']} 剩余生命值: {target['health']}/{target['max_health']}"
     else:
-        result_message += f"❤️ {target['name']} 剩余生命值: {target['health']}/{target['max_health']}"
+        # self技能、buff技能、debuff技能不显示生命值，只显示效果完成
+        result_message += f"✅ 技能效果已生效！"
     
     return result_message
 
@@ -368,11 +409,14 @@ ENEMY_SELECTING_ATTACKER, ENEMY_SELECTING_TARGET, ENEMY_SELECTING_SKILL = 3, 4, 
 
 async def start_enemy_attack(update: Update, context: CallbackContext) -> int:
     """开始敌方攻击流程"""
-    # 获取所有在战斗中的敌方角色
-    enemy_characters = get_characters_by_type("enemy", in_battle=True)
+    # 获取有行动次数的敌方角色
+    enemy_characters = get_characters_with_actions("enemy")
     
     if not enemy_characters:
-        await update.message.reply_text("没有敌方角色在战斗中。")
+        await update.message.reply_text(
+            "没有任何有行动次数的敌方角色可以用来攻击。\n"
+            "如果所有敌方角色都已耗尽行动次数，请使用 /end_turn 结束回合。"
+        )
         return ConversationHandler.END
     
     # 创建攻击者选择键盘
@@ -382,14 +426,15 @@ async def start_enemy_attack(update: Update, context: CallbackContext) -> int:
         if enemy['health'] <= 0:
             continue
             
-        # 格式化角色状态
-        status_text = format_character_status(enemy)
+        # 显示角色信息和行动次数
+        action_info = f" ⚡{enemy['current_actions']}/{enemy['actions_per_turn']}"
+        status_text = f"{enemy['name']} ({enemy['health']}/{enemy['max_health']}){action_info}"
         keyboard.append([
             InlineKeyboardButton(status_text, callback_data=f"enemy_attacker_{enemy['id']}")
         ])
     
     if not keyboard:
-        await update.message.reply_text("没有存活的敌方角色可以发起攻击。")
+        await update.message.reply_text("没有存活且有行动次数的敌方角色可以发起攻击。")
         return ConversationHandler.END
     
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -428,7 +473,7 @@ async def enemy_select_attacker(update: Update, context: CallbackContext) -> int
         # 检查技能是否在冷却中
         if is_skill_on_cooldown(attacker_id, skill['id']):
             cooldown_remaining = get_skill_cooldown_remaining(attacker_id, skill['id'])
-            skill_text = f"{skill['name']} (冷却中: {cooldown_remaining}回合)"
+            skill_text = f"{skill['name']} (冷却中: {cooldown_remaining}次行动)"
             # 冷却中的技能不可选择
             continue
         else:
@@ -477,7 +522,7 @@ async def enemy_select_skill(update: Update, context: CallbackContext) -> int:
     attacker_id = context.user_data['enemy_attacker_id']
     if is_skill_on_cooldown(attacker_id, skill_id):
         cooldown_remaining = get_skill_cooldown_remaining(attacker_id, skill_id)
-        await query.edit_message_text(f"技能还在冷却中，剩余 {cooldown_remaining} 回合。")
+        await query.edit_message_text(f"技能还在冷却中，剩余 {cooldown_remaining} 次行动。")
         return ConversationHandler.END
     
     skill_info = get_skill(skill_id)
@@ -500,6 +545,7 @@ async def enemy_show_target_selection(update: Update, context: CallbackContext, 
     is_heal_skill = False
     is_buff_skill = False
     is_debuff_skill = False
+    is_self_skill = False
     skill_category = None
     
     if skill_info:
@@ -510,8 +556,31 @@ async def enemy_show_target_selection(update: Update, context: CallbackContext, 
             skill_category = skill_info.get('skill_category', 'damage')
             is_buff_skill = (skill_category == 'buff')
             is_debuff_skill = (skill_category == 'debuff')
+            is_self_skill = (skill_category == 'self')
         except:
             pass
+    
+    # 如果是self技能，直接对自己生效，跳过目标选择
+    if is_self_skill:
+        # 验证攻击者状态
+        if not attacker.get('in_battle'):
+            await query.edit_message_text("技能使用失败：施法者必须在战斗中。")
+            return ConversationHandler.END
+        
+        if attacker.get('health', 0) <= 0:
+            await query.edit_message_text("技能使用失败：施法者已经无法战斗。")
+            return ConversationHandler.END
+        
+        # 直接对自己使用技能
+        result_message = execute_skill_effect(attacker, attacker, skill_info)
+        
+        # 消耗攻击者的行动次数
+        if not use_character_action(attacker['id']):
+            result_message += "\n⚠️ 警告：消耗行动次数失败"
+        
+        result_message = f"敌方技能使用结果:\n{result_message}"
+        await query.edit_message_text(result_message)
+        return ConversationHandler.END
     
     # 根据技能类型选择目标
     if is_heal_skill or is_buff_skill:
@@ -594,8 +663,12 @@ async def enemy_select_target(update: Update, context: CallbackContext) -> int:
     # 执行攻击
     result = execute_skill_effect(attacker, target, skill_info)
     
+    # 消耗攻击者的行动次数
+    if not use_character_action(attacker['id']):
+        result += "\n⚠️ 警告：消耗行动次数失败"
+    
     # 显示战斗结果
-    result_message = f"战斗结果:\n{result}"
+    result_message = f"敌方攻击结果:\n{result}"
     await query.edit_message_text(result_message)
     
     return ConversationHandler.END

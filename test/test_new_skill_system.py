@@ -108,7 +108,7 @@ def simulate_battle():
         # 计算伤害
         base_damage, detail = calculate_damage_from_formula(skill['damage_formula'])
         final_damage = int(base_damage * modifier)
-        final_damage = max(1, final_damage)  # 至少1点伤害
+        final_damage = max(0, final_damage)  # 没有必要至少1点伤害。最少为0就可以了。
         
         print(f"骰子结果: {detail} = {base_damage} 点基础伤害")
         print(f"应用修正: {base_damage} × {modifier:.2f} = {final_damage} 点最终伤害")

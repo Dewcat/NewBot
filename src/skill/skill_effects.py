@@ -43,6 +43,8 @@ class SkillEffect(ABC):
             return self.execute_buff(attacker, target, skill_info)
         elif skill_category == 'debuff':
             return self.execute_debuff(attacker, target, skill_info)
+        elif skill_category == 'self':
+            return self.execute_self(attacker, target, skill_info)
         else:  # damage 或其他默认为伤害
             return self.execute_damage(attacker, target, skill_info)
     
@@ -223,6 +225,35 @@ class SkillEffect(ABC):
             'target_health': target['health']
         }
     
+    def execute_self(self, attacker, target, skill_info):
+        """执行自我技能 - 不造成伤害，只对自己施加效果"""
+        
+        # 自我技能的目标始终是施法者自己
+        self_target = attacker
+        
+        # 处理技能的状态效果 - 自我技能只对施法者生效
+        status_messages = self.apply_skill_status_effects(attacker, self_target, skill_info)
+        
+        # 处理行动后效果
+        action_messages = process_action_effects(attacker['id'])
+        
+        # 更新冷却时间
+        update_character_cooldowns(attacker['id'], skill_info['id'] if skill_info else 1)
+        
+        skill_name = skill_info.get('name', '自我技能') if skill_info else '自我技能'
+        result_text = f"🧘 {skill_name}：自我强化效果"
+        
+        # 添加状态效果消息
+        all_messages = status_messages + action_messages
+        if all_messages:
+            result_text += "\n" + "\n".join(all_messages)
+        
+        return {
+            'total_damage': 0,
+            'result_text': result_text,
+            'target_health': attacker['health']
+        }
+    
     def apply_skill_status_effects(self, attacker, target, skill_info):
         """应用技能的状态效果"""
         messages = []
@@ -243,22 +274,52 @@ class SkillEffect(ABC):
         # 1. 处理self_buff效果 - 始终施加给施法者自己
         if 'self_buff' in effects:
             buff_info = effects['self_buff']
-            success = add_status_effect(
-                attacker['id'],
-                'buff',
-                buff_info['type'],
-                buff_info['intensity'],
-                buff_info['duration']
-            )
-            if success:
-                buff_names = {
-                    'strong': '强壮',
-                    'breathing': '呼吸法',
-                    'guard': '守护',
-                    'shield': '护盾'
-                }
-                buff_name = buff_names.get(buff_info['type'], buff_info['type'])
-                messages.append(f"✨ {attacker['name']} 获得了 {buff_name} 效果")
+            
+            # 特殊处理冷却缩减 - 立即生效而不是作为状态效果
+            if buff_info['type'] == 'cooldown_reduction':
+                messages.extend(self._apply_instant_cooldown_reduction(attacker['id'], buff_info['intensity']))
+            # 特殊处理加速 - 立即生效当前回合并添加为状态效果
+            elif buff_info['type'] == 'haste':
+                success = add_status_effect(
+                    attacker['id'],
+                    'buff',
+                    buff_info['type'],
+                    buff_info['intensity'],
+                    buff_info['duration']
+                )
+                if success:
+                    # 立即应用加速效果到当前回合
+                    current_char = get_character(attacker['id'])
+                    if current_char:
+                        from database.queries import update_character_actions
+                        current_actions = current_char.get('current_actions', 0)
+                        new_actions = current_actions + buff_info['intensity']
+                        if update_character_actions(attacker['id'], new_actions):
+                            messages.append(f"✨ {attacker['name']} 获得了 加速 效果")
+                            messages.append(f"⚡ {attacker['name']} 的加速立即增加了 {buff_info['intensity']} 次行动次数")
+            else:
+                success = add_status_effect(
+                    attacker['id'],
+                    'buff',
+                    buff_info['type'],
+                    buff_info['intensity'],
+                    buff_info['duration']
+                )
+                if success:
+                    buff_names = {
+                        'strong': '强壮',
+                        'breathing': '呼吸法',
+                        'guard': '守护',
+                        'shield': '护盾'
+                    }
+                    buff_name = buff_names.get(buff_info['type'], buff_info['type'])
+                    
+                    if buff_info['type'] == 'shield':
+                        # 护盾只显示盾值
+                        messages.append(f"✨ {attacker['name']} 获得了 {buff_info['intensity']} 点{buff_name}")
+                    else:
+                        # 其他buff显示强度和持续时间
+                        messages.append(f"✨ {attacker['name']} 获得了 {buff_name}({buff_info['intensity']}) 效果，持续 {buff_info['duration']} 回合")
         
         # 2. 处理self_debuff效果 - 始终施加给施法者自己
         if 'self_debuff' in effects:
@@ -280,7 +341,7 @@ class SkillEffect(ABC):
                     'vulnerable': '易伤'
                 }
                 debuff_name = debuff_names.get(debuff_info['type'], debuff_info['type'])
-                messages.append(f"💀 {attacker['name']} 受到了 {debuff_name} 效果")
+                messages.append(f"💀 {attacker['name']} 受到了 {debuff_name}({debuff_info['intensity']}) 效果，持续 {debuff_info['duration']} 回合")
         
         # 3. 处理buff效果 - 始终施加给目标
         if 'buff' in effects:
@@ -288,22 +349,51 @@ class SkillEffect(ABC):
             buff_target_id = target['id'] if target else attacker['id']
             buff_target_name = target['name'] if target else attacker['name']
             
-            success = add_status_effect(
-                buff_target_id,
-                'buff',
-                buff_info['type'],
-                buff_info['intensity'],
-                buff_info['duration']
-            )
-            if success:
-                buff_names = {
-                    'strong': '强壮',
-                    'breathing': '呼吸法',
-                    'guard': '守护',
-                    'shield': '护盾'
-                }
-                buff_name = buff_names.get(buff_info['type'], buff_info['type'])
-                messages.append(f"✨ {buff_target_name} 获得了 {buff_name} 效果")
+            # 特殊处理冷却缩减 - 立即生效而不是作为状态效果
+            if buff_info['type'] == 'cooldown_reduction':
+                messages.extend(self._apply_instant_cooldown_reduction(buff_target_id, buff_info['intensity']))
+            # 特殊处理加速 - 立即生效当前回合并添加为状态效果
+            elif buff_info['type'] == 'haste':
+                success = add_status_effect(
+                    buff_target_id,
+                    'buff',
+                    buff_info['type'],
+                    buff_info['intensity'],
+                    buff_info['duration']
+                )
+                if success:
+                    # 立即应用加速效果到当前回合
+                    current_char = get_character(buff_target_id)
+                    if current_char:
+                        from database.queries import update_character_actions
+                        current_actions = current_char.get('current_actions', 0)
+                        new_actions = current_actions + buff_info['intensity']
+                        if update_character_actions(buff_target_id, new_actions):
+                            messages.append(f"✨ {buff_target_name} 获得了 加速 效果")
+                            messages.append(f"⚡ {buff_target_name} 的加速立即增加了 {buff_info['intensity']} 次行动次数")
+            else:
+                success = add_status_effect(
+                    buff_target_id,
+                    'buff',
+                    buff_info['type'],
+                    buff_info['intensity'],
+                    buff_info['duration']
+                )
+                if success:
+                    buff_names = {
+                        'strong': '强壮',
+                        'breathing': '呼吸法',
+                        'guard': '守护',
+                        'shield': '护盾'
+                    }
+                    buff_name = buff_names.get(buff_info['type'], buff_info['type'])
+                    
+                    if buff_info['type'] == 'shield':
+                        # 护盾只显示盾值
+                        messages.append(f"✨ {buff_target_name} 获得了 {buff_info['intensity']} 点{buff_name}")
+                    else:
+                        # 其他buff显示强度和持续时间
+                        messages.append(f"✨ {buff_target_name} 获得了 {buff_name}({buff_info['intensity']}) 效果，持续 {buff_info['duration']} 回合")
         
         # 4. 处理debuff效果 - 始终施加给目标
         if 'debuff' in effects:
@@ -328,7 +418,74 @@ class SkillEffect(ABC):
                     'vulnerable': '易伤'
                 }
                 debuff_name = debuff_names.get(debuff_info['type'], debuff_info['type'])
-                messages.append(f"💀 {debuff_target_name} 受到了 {debuff_name} 效果")
+                messages.append(f"💀 {debuff_target_name} 受到了 {debuff_name}({debuff_info['intensity']}) 效果，持续 {debuff_info['duration']} 回合")
+        
+        return messages
+    
+    def _apply_instant_cooldown_reduction(self, character_id: int, intensity: int) -> list:
+        """立即应用冷却缩减效果"""
+        from database.queries import get_character
+        from database.db_connection import get_db_connection
+        import json
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        messages = []
+        
+        # 获取角色信息
+        character = get_character(character_id)
+        if not character:
+            return messages
+        
+        character_name = character.get('name', f'角色{character_id}')
+        
+        try:
+            # 获取当前状态
+            status = character.get('status', {})
+            if isinstance(status, str):
+                status = json.loads(status)
+            elif status is None:
+                status = {}
+            
+            if 'cooldowns' in status and status['cooldowns']:
+                # 有冷却中的技能
+                reduced_skills = []
+                for skill_id, cooldown in list(status['cooldowns'].items()):
+                    new_cooldown = max(0, cooldown - intensity)
+                    if new_cooldown <= 0:
+                        del status['cooldowns'][skill_id]
+                        reduced_skills.append(skill_id)
+                    else:
+                        status['cooldowns'][skill_id] = new_cooldown
+                
+                # 更新角色状态
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                try:
+                    cursor.execute(
+                        "UPDATE characters SET status = ? WHERE id = ?",
+                        (json.dumps(status), character_id)
+                    )
+                    conn.commit()
+                    
+                    if reduced_skills or intensity > 0:
+                        if reduced_skills:
+                            messages.append(f"❄️ {character_name} 的技能冷却时间缩短了，部分技能可立即使用")
+                        else:
+                            messages.append(f"❄️ {character_name} 的技能冷却时间得到了缩短")
+                            
+                except Exception as e:
+                    logger.error(f"更新冷却状态时出错: {e}")
+                    conn.rollback()
+                finally:
+                    conn.close()
+            else:
+                # 没有冷却中的技能
+                messages.append(f"❄️ {character_name} 尝试缩短技能冷却时间，但当前没有技能在冷却中")
+                
+        except (json.JSONDecodeError, TypeError, KeyError) as e:
+            logger.error(f"处理冷却缩减时出错: {e}")
+            messages.append(f"❄️ {character_name} 的技能得到了强化")
         
         return messages
     
