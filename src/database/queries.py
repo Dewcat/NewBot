@@ -83,6 +83,41 @@ def get_friendly_characters():
     """获取所有友方角色"""
     return get_characters_by_type("friendly")
 
+def get_battle_characters():
+    """获取所有正在战斗中的角色"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("SELECT * FROM characters WHERE in_battle = 1")
+        characters = cursor.fetchall()
+        
+        if not characters:
+            return []
+        
+        result = []
+        for char in characters:
+            # 转换为字典
+            char_dict = dict(char)
+            
+            # 解析status JSON
+            if 'status' in char_dict and char_dict['status']:
+                try:
+                    char_dict['status'] = json.loads(char_dict['status'])
+                except json.JSONDecodeError:
+                    char_dict['status'] = {}
+            else:
+                char_dict['status'] = {}
+            
+            result.append(char_dict)
+        
+        return result
+    except Exception as e:
+        logger.error(f"获取战斗角色时出错: {e}")
+        return []
+    finally:
+        conn.close()
+
 def get_characters_by_type(character_type, in_battle=None):
     """获取指定类型的所有角色
     
@@ -316,7 +351,7 @@ def get_character_skills(character_id):
     
     try:
         cursor.execute("""
-            SELECT s.id, s.name, s.description, s.damage_multiplier, s.cooldown,
+            SELECT s.id, s.name, s.description, s.cooldown,
                    s.damage_formula, s.effects
             FROM skills s
             JOIN character_skills cs ON s.id = cs.skill_id
@@ -334,10 +369,9 @@ def get_character_skills(character_id):
                 "id": skill[0],
                 "name": skill[1],
                 "description": skill[2],
-                "damage_multiplier": skill[3],
-                "cooldown": skill[4],
-                "damage_formula": skill[5] if skill[5] else '1d6',
-                "effects": skill[6] if skill[6] else '{}'
+                "cooldown": skill[3],
+                "damage_formula": skill[4] if skill[4] else '1d6',
+                "effects": skill[5] if skill[5] else '{}'
             }
             result.append(skill_dict)
         
@@ -387,7 +421,7 @@ def get_all_skills():
     cursor = conn.cursor()
     
     try:
-        cursor.execute("SELECT id, name, description, damage_multiplier, cooldown FROM skills ORDER BY id")
+        cursor.execute("SELECT id, name, description, cooldown FROM skills ORDER BY id")
         skills = cursor.fetchall()
         
         result = []
@@ -396,8 +430,7 @@ def get_all_skills():
                 "id": skill[0],
                 "name": skill[1],
                 "description": skill[2],
-                "damage_multiplier": skill[3],
-                "cooldown": skill[4]
+                "cooldown": skill[3]
             })
         
         return result
@@ -436,7 +469,7 @@ def get_skill_by_id(skill_id):
     cursor = conn.cursor()
     
     try:
-        cursor.execute("SELECT id, name, description, damage_multiplier, cooldown FROM skills WHERE id = ?", (skill_id,))
+        cursor.execute("SELECT id, name, description, cooldown FROM skills WHERE id = ?", (skill_id,))
         skill = cursor.fetchone()
         
         if not skill:
@@ -446,8 +479,7 @@ def get_skill_by_id(skill_id):
             "id": skill[0],
             "name": skill[1],
             "description": skill[2],
-            "damage_multiplier": skill[3],
-            "cooldown": skill[4]
+            "cooldown": skill[3]
         }
     except Exception as e:
         logger.error(f"获取技能信息时出错: {e}")

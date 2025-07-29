@@ -34,6 +34,8 @@ def run_migrations():
             ("update_buff_debuff_skills", update_buff_debuff_skills),
             ("update_status_effect_targeting", update_status_effect_targeting),
             ("add_action_system", add_action_system),
+            ("add_aoe_skill_system", add_aoe_skill_system),
+            ("remove_damage_multiplier", remove_damage_multiplier),
             # 将来可以在这里添加更多迁移
         ]
         
@@ -60,14 +62,14 @@ def initial_setup(conn):
     
     # 添加基础技能
     base_skills = [
-        (1, "普通攻击", "基础的物理攻击", 1.0, 0),
-        (2, "强力一击", "造成1.5倍伤害的强力攻击", 1.5, 3),
-        (3, "连击", "造成0.8倍伤害的两次连续攻击", 0.8, 2),
-        (4, "暴击", "有30%几率造成2倍伤害", 2.0, 5)
+        (1, "普通攻击", "基础的物理攻击", 0),
+        (2, "强力一击", "造成1.5倍伤害的强力攻击", 3),
+        (3, "连击", "造成0.8倍伤害的两次连续攻击", 2),
+        (4, "暴击", "有30%几率造成2倍伤害", 5)
     ]
     
     cursor.executemany(
-        "INSERT OR IGNORE INTO skills (id, name, description, damage_multiplier, cooldown) VALUES (?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO skills (id, name, description, cooldown) VALUES (?, ?, ?, ?)",
         base_skills
     )
     
@@ -550,4 +552,97 @@ def add_haste_cooldown_skills(conn):
         logger.info("✅ 已添加加速和冷却缩减技能")
     except Exception as e:
         logger.error(f"添加加速和冷却缩减技能时出错: {e}")
+        conn.rollback()
+
+def add_aoe_skill_system(conn):
+    """添加AOE技能系统"""
+    cursor = conn.cursor()
+    
+    try:
+        logger.info("开始添加AOE技能系统...")
+        
+        # 添加AOE技能示例
+        aoe_skills = [
+            # AOE伤害技能
+            (200, '烈焰风暴', 'aoe', '30+1d30', 'magic', '{}', 8,
+             '{"debuff": {"type": "burn", "intensity": 5, "duration": 3}, "self_debuff": {"type": "weak", "intensity": 5, "duration": 3}, "self_damage": {"damage_percentage": 10}}',
+             'AOE魔法攻击，对所有敌方造成伤害并附加燃烧效果，但会削弱自己并承受反噬伤害'),
+            
+            # AOE治疗技能
+            (201, '圣光普照', 'aoe', '20+1d20', 'magic', '{}', 6,
+             '{"buff": {"type": "strong", "intensity": 3, "duration": 3}, "self_debuff": {"type": "weak", "intensity": 2, "duration": 2}}',
+             'AOE治疗技能，恢复所有友方的生命值并提供强壮效果，但会削弱施法者'),
+            
+            # AOE减益技能
+            (202, '恐惧光环', 'aoe', '0', 'none', '{}', 5,
+             '{"debuff": {"type": "vulnerable", "intensity": 3, "duration": 4}, "self_buff": {"type": "strong", "intensity": 2, "duration": 3}}',
+             'AOE减益技能，对所有敌方施加易伤状态，同时强化自己'),
+            
+            # AOE增益技能  
+            (203, '战吼激励', 'aoe', '0', 'none', '{}', 4,
+             '{"buff": {"type": "breathing", "intensity": 5, "duration": 4}, "self_debuff": {"type": "weak", "intensity": 1, "duration": 1}}',
+             'AOE增益技能，为所有友方提供呼吸法效果，但会短暂削弱施法者')
+        ]
+        
+        for skill_data in aoe_skills:
+            skill_id, name, category, formula, damage_type, special_tags, cooldown, effects, description = skill_data
+            cursor.execute("""
+                INSERT OR IGNORE INTO skills 
+                (id, name, skill_category, damage_formula, damage_type, special_damage_tags, cooldown, effects, description) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (skill_id, name, category, formula, damage_type, special_tags, cooldown, effects, description))
+            logger.info(f"✓ 添加AOE技能: {name} (ID: {skill_id})")
+        
+        conn.commit()
+        logger.info("✅ 已添加AOE技能系统")
+    except Exception as e:
+        logger.error(f"添加AOE技能系统时出错: {e}")
+        conn.rollback()
+
+def remove_damage_multiplier(conn):
+    """移除未使用的damage_multiplier字段"""
+    logger.info("开始移除damage_multiplier字段...")
+    
+    try:
+        cursor = conn.cursor()
+        
+        # 检查是否存在damage_multiplier字段
+        cursor.execute("PRAGMA table_info(skills)")
+        columns = [column[1] for column in cursor.fetchall()]
+        
+        if 'damage_multiplier' not in columns:
+            logger.info("damage_multiplier字段不存在，无需移除")
+            return
+            
+        # 创建新的skills表（没有damage_multiplier字段）
+        cursor.execute("""
+            CREATE TABLE skills_new (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                skill_category TEXT NOT NULL,
+                damage_formula TEXT,
+                damage_type TEXT,
+                special_damage_tags TEXT,
+                cooldown INTEGER DEFAULT 0,
+                effects TEXT,
+                description TEXT
+            )
+        """)
+        
+        # 复制数据（不包括damage_multiplier）
+        cursor.execute("""
+            INSERT INTO skills_new 
+            (id, name, skill_category, damage_formula, damage_type, special_damage_tags, cooldown, effects, description)
+            SELECT id, name, skill_category, damage_formula, damage_type, special_damage_tags, cooldown, effects, description
+            FROM skills
+        """)
+        
+        # 删除旧表并重命名新表
+        cursor.execute("DROP TABLE skills")
+        cursor.execute("ALTER TABLE skills_new RENAME TO skills")
+        
+        conn.commit()
+        logger.info("✅ 已移除damage_multiplier字段")
+    except Exception as e:
+        logger.error(f"移除damage_multiplier字段时出错: {e}")
         conn.rollback()

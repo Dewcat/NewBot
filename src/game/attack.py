@@ -162,7 +162,7 @@ async def show_target_selection(update: Update, context: CallbackContext, skill_
     attacker_id = context.user_data['attacker_id']
     attacker = get_character(attacker_id)
     
-    # 确定技能类型和目标选择
+    # 确定技能类型和目标选择 - 统一使用 skill_category
     is_heal_skill = False
     is_buff_skill = False
     is_debuff_skill = False
@@ -170,16 +170,11 @@ async def show_target_selection(update: Update, context: CallbackContext, skill_
     skill_category = None
     
     if skill_info:
-        try:
-            effects = skill_info.get('effects', '{}')
-            effects_dict = json.loads(effects) if isinstance(effects, str) else effects
-            is_heal_skill = effects_dict.get('heal', False)
-            skill_category = skill_info.get('skill_category', 'damage')
-            is_buff_skill = (skill_category == 'buff')
-            is_debuff_skill = (skill_category == 'debuff')
-            is_self_skill = (skill_category == 'self')
-        except:
-            pass
+        skill_category = skill_info.get('skill_category', 'damage')
+        is_heal_skill = (skill_category == 'healing')
+        is_buff_skill = (skill_category == 'buff')
+        is_debuff_skill = (skill_category == 'debuff')
+        is_self_skill = (skill_category == 'self')
     
     # 如果是self技能，直接对自己生效，跳过目标选择
     if is_self_skill:
@@ -320,27 +315,62 @@ def execute_skill_effect(attacker, target, skill_info):
     """执行技能效果并返回结果消息"""
     skill_name = skill_info['name'] if skill_info else "普通攻击"
     
-    # 判断技能类型
+    # 判断技能类型 - 统一使用 skill_category
     is_heal_skill = False
     is_buff_skill = False
     is_debuff_skill = False
     is_self_skill = False
+    is_aoe_skill = False
     skill_category = None
     
     if skill_info:
-        try:
-            effects = skill_info.get('effects', '{}')
-            effects_dict = json.loads(effects) if isinstance(effects, str) else effects
-            is_heal_skill = effects_dict.get('heal', False)
-            skill_category = skill_info.get('skill_category', 'damage')
-            is_buff_skill = (skill_category == 'buff')
-            is_debuff_skill = (skill_category == 'debuff')
-            is_self_skill = (skill_category == 'self')
-        except:
-            pass
+        skill_category = skill_info.get('skill_category', 'damage')
+        is_heal_skill = (skill_category == 'healing')
+        is_buff_skill = (skill_category == 'buff')
+        is_debuff_skill = (skill_category == 'debuff')
+        is_self_skill = (skill_category == 'self')
+        is_aoe_skill = (skill_category == 'aoe')
     
     # 根据技能类型设置不同的描述
-    if is_self_skill:
+    if is_aoe_skill:
+        # 判断AOE技能的具体效果类型
+        aoe_type = "群体攻击"  # 默认为攻击
+        aoe_icon = "💥"
+        aoe_title = "AOE攻击结果"
+        
+        if skill_info:
+            # 检查技能公式判断是否为治疗AOE
+            damage_formula = skill_info.get('damage_formula', '0')
+            if damage_formula == '0' or not damage_formula:
+                # 无伤害公式，检查效果
+                effects = skill_info.get('effects', '{}')
+                try:
+                    effects_dict = json.loads(effects) if isinstance(effects, str) else effects
+                    
+                    # 检查是否有治疗相关的效果
+                    if 'healing' in effects_dict or any('heal' in str(key).lower() for key in effects_dict.keys()):
+                        aoe_type = "群体治疗"
+                        aoe_icon = "💚"
+                        aoe_title = "AOE治疗结果"
+                    # 检查是否只有负面状态效果（debuff）- 必须在buff之前检查
+                    elif any(str(key).lower() == 'debuff' or 'weakness' in str(key).lower() for key in effects_dict.keys()):
+                        aoe_type = "群体削弱"
+                        aoe_icon = "💀"
+                        aoe_title = "AOE削弱结果"
+                    # 检查是否只有正面状态效果（buff）
+                    elif any(str(key).lower() == 'buff' or 'boost' in str(key).lower() for key in effects_dict.keys()):
+                        aoe_type = "群体强化"
+                        aoe_icon = "✨"
+                        aoe_title = "AOE强化结果"
+                except:
+                    pass
+            else:
+                # 有伤害公式的都是攻击技能，不管是否有额外的治疗效果
+                pass  # 保持默认的攻击类型
+        
+        result_message = f"{aoe_icon} {aoe_title} {aoe_icon}\n\n"
+        result_message += f"{attacker['name']} 使用 {skill_name} 发动了{aoe_type}！\n\n"
+    elif is_self_skill:
         result_message = f"🧘 自我强化结果 🧘\n\n"
         result_message += f"{attacker['name']} 使用 {skill_name} 强化了自己！\n\n"
     elif is_heal_skill:
@@ -363,14 +393,38 @@ def execute_skill_effect(attacker, target, skill_info):
     result_message += skill_result['result_text'] + "\n\n"
     
     # 根据技能类型决定是否显示生命值状态
-    if not (is_self_skill or is_buff_skill or is_debuff_skill):
-        # 只有攻击和治疗技能才显示生命值状态
+    if not (is_self_skill or is_buff_skill or is_debuff_skill or is_aoe_skill):
+        # 只有单体攻击和治疗技能才显示单个目标生命值状态
         target = get_character(target['id'])
         
         if target['health'] <= 0:
             result_message += f"💀 {target['name']} 已被击倒！"
         else:
             result_message += f"❤️ {target['name']} 剩余生命值: {target['health']}/{target['max_health']}"
+    elif is_aoe_skill:
+        # AOE技能显示所有目标的状态概览
+        from database.queries import get_battle_characters
+        battle_chars = get_battle_characters()
+        
+        if skill_info and skill_info.get('damage_formula', '0') != '0':
+            # AOE伤害技能：显示敌方状态
+            enemies = [char for char in battle_chars 
+                      if char['character_type'] != attacker['character_type']]
+            if enemies:
+                result_message += f"\n💀 敌方状态："
+                for enemy in enemies:
+                    if enemy['health'] <= 0:
+                        result_message += f"\n  💀 {enemy['name']} 已被击倒"
+                    else:
+                        result_message += f"\n  ❤️ {enemy['name']}: {enemy['health']}/{enemy['max_health']}"
+        else:
+            # AOE治疗/buff技能：显示友方状态
+            allies = [char for char in battle_chars 
+                     if char['character_type'] == attacker['character_type']]
+            if allies:
+                result_message += f"\n💚 友方状态："
+                for ally in allies:
+                    result_message += f"\n  ❤️ {ally['name']}: {ally['health']}/{ally['max_health']}"
     else:
         # self技能、buff技能、debuff技能不显示生命值，只显示效果完成
         result_message += f"✅ 技能效果已生效！"
@@ -477,23 +531,20 @@ async def enemy_select_attacker(update: Update, context: CallbackContext) -> int
             # 冷却中的技能不可选择
             continue
         else:
-            # 判断技能类型并添加图标
+            # 判断技能类型并添加图标 - 统一使用 skill_category
             skill_info = get_skill(skill['id'])
-            try:
-                effects = skill.get('effects', '{}')
-                effects_dict = json.loads(effects) if isinstance(effects, str) else effects
-                skill_category = skill_info.get('skill_category', 'damage') if skill_info else 'damage'
-                
-                if effects_dict.get('heal', False):
-                    skill_type_icon = "💚"  # 治疗技能
-                elif skill_category == 'buff':
-                    skill_type_icon = "✨"  # buff技能
-                elif skill_category == 'debuff':
-                    skill_type_icon = "💀"  # debuff技能
-                else:
-                    skill_type_icon = "⚔️"  # 伤害技能
-            except:
-                skill_type_icon = "⚔️"
+            skill_category = skill_info.get('skill_category', 'damage') if skill_info else 'damage'
+            
+            if skill_category == 'healing':
+                skill_type_icon = "💚"  # 治疗技能
+            elif skill_category == 'buff':
+                skill_type_icon = "✨"  # buff技能
+            elif skill_category == 'debuff':
+                skill_type_icon = "💀"  # debuff技能
+            elif skill_category == 'self':
+                skill_type_icon = "🧘"  # 自我技能
+            else:
+                skill_type_icon = "⚔️"  # 伤害技能
             
             skill_text = f"{skill_type_icon} {skill['name']}"
         
@@ -541,7 +592,7 @@ async def enemy_show_target_selection(update: Update, context: CallbackContext, 
     attacker_id = context.user_data['enemy_attacker_id']
     attacker = get_character(attacker_id)
     
-    # 确定技能类型和目标选择
+    # 确定技能类型和目标选择 - 统一使用 skill_category
     is_heal_skill = False
     is_buff_skill = False
     is_debuff_skill = False
@@ -549,16 +600,11 @@ async def enemy_show_target_selection(update: Update, context: CallbackContext, 
     skill_category = None
     
     if skill_info:
-        try:
-            effects = skill_info.get('effects', '{}')
-            effects_dict = json.loads(effects) if isinstance(effects, str) else effects
-            is_heal_skill = effects_dict.get('heal', False)
-            skill_category = skill_info.get('skill_category', 'damage')
-            is_buff_skill = (skill_category == 'buff')
-            is_debuff_skill = (skill_category == 'debuff')
-            is_self_skill = (skill_category == 'self')
-        except:
-            pass
+        skill_category = skill_info.get('skill_category', 'damage')
+        is_heal_skill = (skill_category == 'healing')
+        is_buff_skill = (skill_category == 'buff')
+        is_debuff_skill = (skill_category == 'debuff')
+        is_self_skill = (skill_category == 'self')
     
     # 如果是self技能，直接对自己生效，跳过目标选择
     if is_self_skill:

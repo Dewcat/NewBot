@@ -104,8 +104,25 @@ def calculate_advanced_damage(skill, attacker, target):
     )
     
     # 3. 种族特攻加成
-    special_damage_tags = json.loads(skill.get('special_damage_tags', '{}'))
-    target_race_tags = json.loads(target.get('race_tags', '[]'))
+    special_tags_str = skill.get('special_damage_tags', '{}')
+    # 处理空字符串的情况
+    if not special_tags_str or special_tags_str.strip() == '':
+        special_damage_tags = {}
+    else:
+        try:
+            special_damage_tags = json.loads(special_tags_str)
+        except json.JSONDecodeError:
+            special_damage_tags = {}
+    
+    target_race_tags_str = target.get('race_tags', '[]')
+    if not target_race_tags_str or target_race_tags_str.strip() == '':
+        target_race_tags = []
+    else:
+        try:
+            target_race_tags = json.loads(target_race_tags_str)
+        except json.JSONDecodeError:
+            target_race_tags = []
+    
     race_bonus = calculate_race_bonus(special_damage_tags, target_race_tags)
     
     # 4. 抗性减伤

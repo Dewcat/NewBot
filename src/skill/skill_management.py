@@ -50,7 +50,7 @@ async def start_skill_management(update: Update, context: CallbackContext) -> in
     skills_text = "当前技能：\n"
     if character_skills:
         for skill in character_skills:
-            skills_text += f"• {skill['name']} - {skill['description']} (伤害倍率: {skill['damage_multiplier']}x)\n"
+            skills_text += f"• {skill['name']} - {skill['description']} \n"
     else:
         skills_text += "无技能\n"
     
@@ -88,7 +88,7 @@ async def select_character_for_skills(update: Update, context: CallbackContext) 
     skills_text = "当前技能：\n"
     if character_skills:
         for skill in character_skills:
-            skills_text += f"• {skill['name']} - {skill['description']} (伤害倍率: {skill['damage_multiplier']}x)\n"
+            skills_text += f"• {skill['name']} - {skill['description']} \n"
     else:
         skills_text += "无技能\n"
     
@@ -137,7 +137,7 @@ async def handle_action_selection(update: Update, context: CallbackContext) -> i
         for skill in available_skills:
             keyboard.append([
                 InlineKeyboardButton(
-                    f"➕ {skill['name']} (伤害倍率: {skill['damage_multiplier']}x)", 
+                    f"➕ {skill['name']} ", 
                     callback_data=f"toggle_add_{skill['id']}"
                 )
             ])
@@ -174,7 +174,7 @@ async def handle_action_selection(update: Update, context: CallbackContext) -> i
         for skill in removable_skills:
             keyboard.append([
                 InlineKeyboardButton(
-                    f"➖ {skill['name']} (伤害倍率: {skill['damage_multiplier']}x)", 
+                    f"➖ {skill['name']} ", 
                     callback_data=f"toggle_remove_{skill['id']}"
                 )
             ])
@@ -209,7 +209,7 @@ async def handle_action_selection(update: Update, context: CallbackContext) -> i
         for skill in available_skills:
             keyboard.append([
                 InlineKeyboardButton(
-                    f"{skill['name']} (伤害倍率: {skill['damage_multiplier']}x)", 
+                    f"{skill['name']} ", 
                     callback_data=f"add_{skill['id']}"
                 )
             ])
@@ -235,7 +235,7 @@ async def handle_action_selection(update: Update, context: CallbackContext) -> i
         for skill in removable_skills:
             keyboard.append([
                 InlineKeyboardButton(
-                    f"{skill['name']} (伤害倍率: {skill['damage_multiplier']}x)", 
+                    f"{skill['name']} ", 
                     callback_data=f"remove_{skill['id']}"
                 )
             ])
@@ -253,7 +253,7 @@ async def handle_action_selection(update: Update, context: CallbackContext) -> i
         for skill in all_skills:
             skills_text += f"🔸 {skill['name']}\n"
             skills_text += f"   描述：{skill['description']}\n"
-            skills_text += f"   伤害倍率：{skill['damage_multiplier']}x\n"
+            skills_text += f"   "
             skills_text += f"   冷却时间：{skill['cooldown']}回合\n\n"
         
         await query.edit_message_text(skills_text)
@@ -399,9 +399,9 @@ async def handle_batch_skill_toggle(update: Update, context: CallbackContext) ->
             keyboard = []
             for skill in available_skills:
                 if skill['id'] in selected_skills:
-                    button_text = f"✅ {skill['name']} (伤害倍率: {skill['damage_multiplier']}x)"
+                    button_text = f"✅ {skill['name']} "
                 else:
-                    button_text = f"➕ {skill['name']} (伤害倍率: {skill['damage_multiplier']}x)"
+                    button_text = f"➕ {skill['name']} "
                 
                 keyboard.append([
                     InlineKeyboardButton(button_text, callback_data=f"toggle_add_{skill['id']}")
@@ -418,9 +418,9 @@ async def handle_batch_skill_toggle(update: Update, context: CallbackContext) ->
             keyboard = []
             for skill in removable_skills:
                 if skill['id'] in selected_skills:
-                    button_text = f"❌ {skill['name']} (伤害倍率: {skill['damage_multiplier']}x)"
+                    button_text = f"❌ {skill['name']} "
                 else:
-                    button_text = f"➖ {skill['name']} (伤害倍率: {skill['damage_multiplier']}x)"
+                    button_text = f"➖ {skill['name']} "
                 
                 keyboard.append([
                     InlineKeyboardButton(button_text, callback_data=f"toggle_remove_{skill['id']}")
@@ -463,7 +463,7 @@ async def show_character_skills(update: Update, context: CallbackContext) -> Non
     for skill in character_skills:
         skills_text += f"🔸 {skill['name']}\n"
         skills_text += f"   描述：{skill['description']}\n"
-        skills_text += f"   伤害倍率：{skill['damage_multiplier']}x\n"
+        skills_text += f"   "
         skills_text += f"   冷却时间：{skill['cooldown']}回合\n\n"
     
     await update.message.reply_text(skills_text)

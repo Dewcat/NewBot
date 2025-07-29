@@ -50,7 +50,6 @@ def init_db():
         id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
         description TEXT,
-        damage_multiplier REAL DEFAULT 1.0,
         cooldown INTEGER DEFAULT 0
     )
     ''')

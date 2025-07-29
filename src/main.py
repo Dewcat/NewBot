@@ -94,7 +94,7 @@ async def help_command(update: Update, context: CallbackContext) -> None:
 - 种族标签：人类、精灵、机械、龙族等15种可选
 
 🌟 状态效果系统:
-技能分为四种类型：伤害、治疗、增益(buff)、减益(debuff)
+技能分为六种类型：伤害、治疗、增益(buff)、减益(debuff)、自我(self)、AOE
 
 📖 技能类型说明:
 - 伤害技能：造成伤害，可附带状态效果
@@ -102,6 +102,7 @@ async def help_command(update: Update, context: CallbackContext) -> None:
 - 增益技能：纯buff效果，可选择友方目标
 - 减益技能：纯debuff效果，可选择敌方目标
 - 自我技能：只对自己生效，无需选择目标
+- AOE技能：范围技能，对所有敌方或友方目标生效 🌀
 
 🎯 状态效果目标规则:
 - self_buff：施加给施法者自己的增益效果
@@ -130,6 +131,14 @@ async def help_command(update: Update, context: CallbackContext) -> None:
 - 狂怒攻击：伤害+给自己强壮(self_buff)
 - 疾风步：自我技能，无需选择目标，直接为自己加速(self) 🧘
 - 专注冥想：自我技能，无需选择目标，直接减少自己技能冷却(self) 🧘
+- 生命献祭：强力治疗盟友，但会损耗自己的生命力 💔
+- 吸血攻击：攻击敌人并从中汲取生命力回复自己 💚
+
+💫 自我效果系统:
+任何技能都可以添加自我伤害或自我治疗效果：
+- self_damage：技能使用后对施法者造成伤害
+- self_heal：技能使用后为施法者回复生命值
+- 可与任何技能类型组合使用，增加策略深度
 
 📝 批量加入示例:
 /join 艾丽丝 鲍勃 查理 - 批量加入多个角色

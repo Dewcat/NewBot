@@ -45,6 +45,8 @@ class SkillEffect(ABC):
             return self.execute_debuff(attacker, target, skill_info)
         elif skill_category == 'self':
             return self.execute_self(attacker, target, skill_info)
+        elif skill_category == 'aoe':
+            return self.execute_aoe(attacker, target, skill_info)
         else:  # damage 或其他默认为伤害
             return self.execute_damage(attacker, target, skill_info)
     
@@ -117,6 +119,11 @@ class SkillEffect(ABC):
         if detail_messages:
             result_text += "\n" + "\n".join(detail_messages)
         
+        # 处理自我效果（自我伤害/治疗），传递实际伤害值
+        self_effect_messages = self.apply_self_effects(attacker, skill_info, final_damage, 'damage')
+        if self_effect_messages:
+            result_text += "\n" + "\n".join(self_effect_messages)
+        
         return {
             'total_damage': final_damage,
             'result_text': result_text,
@@ -155,21 +162,77 @@ class SkillEffect(ABC):
         if all_messages:
             result_text += "\n" + "\n".join(all_messages)
         
+        # 处理自我效果（自我伤害/治疗），传递原始治疗值
+        self_effect_messages = self.apply_self_effects(attacker, skill_info, heal_amount, 'healing')
+        if self_effect_messages:
+            result_text += "\n" + "\n".join(self_effect_messages)
+        
         return {
             'total_damage': -actual_heal,
             'result_text': result_text,
-            'target_health': heal_target['health']
+            'target_health': new_health
+        }
+    
+    def execute_damage_without_self_effects(self, attacker, target, skill_info):
+        """执行伤害技能但不触发自我效果和状态效果（用于AOE）"""
+        # 计算基础伤害
+        damage_result = self.calculate_skill_damage(attacker, target, skill_info)
+        base_damage = damage_result['total_damage']
+        
+        # 应用攻击者的状态效果修正
+        modified_damage, is_crit, attacker_messages = calculate_damage_modifiers(attacker['id'], base_damage)
+        
+        # 应用目标的受击状态效果
+        final_damage, target_messages = process_hit_effects(target['id'], modified_damage)
+        
+        # 应用伤害
+        new_health = max(0, target['health'] - final_damage)
+        update_character_health(target['id'], new_health)
+        record_battle(attacker['id'], target['id'], final_damage, skill_info['id'] if skill_info else None)
+        
+        # 构建伤害显示（简化版，不包含状态效果）
+        result_text = f"总伤害: {final_damage}"
+        
+        return {
+            'total_damage': final_damage,
+            'result_text': result_text,
+            'target_health': new_health
+        }
+    
+    def execute_healing_without_self_effects(self, attacker, target, skill_info):
+        """执行治疗技能但不触发自我效果和状态效果（用于AOE）"""
+        # 治疗技能的目标是被选中的目标
+        heal_target = target if target else attacker
+        
+        # 计算治疗量
+        heal_amount = self.calculate_healing_amount(attacker, skill_info)
+        
+        new_health = min(heal_target['health'] + heal_amount, heal_target['max_health'])
+        actual_heal = new_health - heal_target['health']
+        
+        update_character_health(heal_target['id'], new_health)
+        record_battle(attacker['id'], heal_target['id'], -actual_heal, skill_info['id'] if skill_info else 1)
+        
+        result_text = f"恢复了 {actual_heal} 点生命值"
+        if actual_heal < heal_amount:
+            result_text += f"（生命值已满，实际恢复{actual_heal}点）"
+        
+        return {
+            'total_damage': -actual_heal,
+            'result_text': result_text,
+            'target_health': new_health
         }
     
     def calculate_healing_amount(self, healer, skill_info):
         """计算治疗量 - 不受攻防和抗性影响"""
         if not skill_info:
             # 无技能时使用基础治疗公式
-            return calculate_damage_from_formula('1d6', healer)
+            heal_result = calculate_damage_from_formula('1d6')
+            return heal_result[0] if isinstance(heal_result, tuple) else heal_result
         
         # 使用技能的伤害公式但不考虑抗性和攻防
-        base_heal = calculate_damage_from_formula(skill_info.get('damage_formula', '1d6'), healer)
-        return base_heal
+        heal_result = calculate_damage_from_formula(skill_info.get('damage_formula', '1d6'))
+        return heal_result[0] if isinstance(heal_result, tuple) else heal_result
     
     def execute_buff(self, attacker, target, skill_info):
         """执行纯增益技能 - 不造成伤害，只施加buff效果"""
@@ -191,6 +254,11 @@ class SkillEffect(ABC):
         all_messages = status_messages + action_messages
         if all_messages:
             result_text += "\n" + "\n".join(all_messages)
+        
+        # 处理自我效果（自我伤害/治疗），buff技能传递0值
+        self_effect_messages = self.apply_self_effects(attacker, skill_info, 0, 'buff')
+        if self_effect_messages:
+            result_text += "\n" + "\n".join(self_effect_messages)
         
         return {
             'total_damage': 0,
@@ -218,6 +286,11 @@ class SkillEffect(ABC):
         all_messages = status_messages + action_messages
         if all_messages:
             result_text += "\n" + "\n".join(all_messages)
+        
+        # 处理自我效果（自我伤害/治疗），debuff技能传递0值
+        self_effect_messages = self.apply_self_effects(attacker, skill_info, 0, 'debuff')
+        if self_effect_messages:
+            result_text += "\n" + "\n".join(self_effect_messages)
         
         return {
             'total_damage': 0,
@@ -248,11 +321,167 @@ class SkillEffect(ABC):
         if all_messages:
             result_text += "\n" + "\n".join(all_messages)
         
+        # 处理自我效果（自我伤害/治疗），自我技能传递0值
+        self_effect_messages = self.apply_self_effects(attacker, skill_info, 0, 'self')
+        if self_effect_messages:
+            result_text += "\n" + "\n".join(self_effect_messages)
+        
         return {
             'total_damage': 0,
             'result_text': result_text,
             'target_health': attacker['health']
         }
+    
+    def execute_aoe(self, attacker, target, skill_info):
+        """执行AOE技能 - 对所有敌方或友方目标生效"""
+        from database.queries import get_battle_characters
+        import json
+        
+        # 分析技能效果来确定是否为治疗/友方技能
+        try:
+            effects = json.loads(skill_info.get('effects', '{}')) if skill_info else {}
+        except (json.JSONDecodeError, TypeError):
+            effects = {}
+        
+        # 判断技能类型
+        damage_formula = skill_info.get('damage_formula', '0') if skill_info else '0'
+        has_damage = damage_formula != '0'
+        has_buff = 'buff' in effects
+        has_debuff = 'debuff' in effects
+        
+        # 获取战斗中的角色
+        battle_chars = get_battle_characters()
+        
+        # 确定目标：有buff效果或无伤害无debuff = 友方技能；有伤害或debuff = 敌方技能
+        if has_buff or (not has_damage and not has_debuff):
+            # 友方技能：目标所有友方
+            targets = [char for char in battle_chars 
+                      if char['character_type'] == attacker['character_type']]
+            action_desc = "强化"
+            is_friendly_skill = True
+        else:
+            # 敌方技能：目标所有敌方
+            targets = [char for char in battle_chars 
+                      if char['character_type'] != attacker['character_type']]
+            action_desc = "攻击"
+            is_friendly_skill = False
+            action_desc = "强化"
+        
+        if not targets:
+            skill_name = skill_info.get('name', 'AOE技能') if skill_info else 'AOE技能'
+            return {
+                'total_damage': 0,
+                'result_text': f"🌀 {skill_name}：没有有效目标",
+                'target_health': 0
+            }
+        
+        # 执行AOE效果
+        total_damage_dealt = 0
+        total_healing_done = 0
+        all_messages = []
+        
+        skill_name = skill_info.get('name', 'AOE技能') if skill_info else 'AOE技能'
+        
+        for aoe_target in targets:
+            if not is_friendly_skill:
+                # 对每个敌方目标执行伤害（不触发自我效果）
+                result = self.execute_damage_without_self_effects(attacker, aoe_target, skill_info)
+                total_damage_dealt += result['total_damage']
+                target_result = f"→ {aoe_target['name']}: {result['result_text'].split(' → ')[-1] if ' → ' in result['result_text'] else result['result_text']}"
+            else:
+                # 对每个友方目标执行治疗/buff（不触发自我效果）
+                result = self.execute_healing_without_self_effects(attacker, aoe_target, skill_info)
+                if result['total_damage'] < 0:  # 治疗技能返回负伤害
+                    total_healing_done += abs(result['total_damage'])
+                target_result = f"→ {aoe_target['name']}: {result['result_text'].split(' → ')[-1] if ' → ' in result['result_text'] else result['result_text']}"
+            
+            all_messages.append(target_result)
+        
+        # 处理施法者的自我效果（基于总效果值）
+        total_effect_value = total_damage_dealt if not is_friendly_skill else total_healing_done
+        self_effect_messages = self.apply_self_effects(attacker, skill_info, total_effect_value, 'aoe')
+        
+        # 统一处理对所有目标的状态效果（只处理一次）
+        target_status_messages = []
+        if targets:
+            # 随机选择一个目标用于状态效果触发（实际上对所有目标生效）
+            sample_target = targets[0]
+            target_status_messages = self.apply_aoe_status_effects(attacker, targets, skill_info, is_friendly_skill)
+        
+        # 处理行动后效果
+        action_messages = process_action_effects(attacker['id'])
+        
+        # 更新冷却时间
+        update_character_cooldowns(attacker['id'], skill_info['id'] if skill_info else 1)
+        
+        # 构建结果文本
+        if not is_friendly_skill:
+            result_text = f"🌀 AOE攻击：{skill_name}\n"
+            result_text += f"💥 对 {len(targets)} 个敌方目标造成总计 {total_damage_dealt} 点伤害\n"
+        else:
+            result_text = f"🌀 AOE{action_desc}：{skill_name}\n"
+            result_text += f"💚 对 {len(targets)} 个友方目标提供效果\n"
+        
+        result_text += "\n".join(all_messages)
+        
+        # 添加自我效果和行动后效果
+        if self_effect_messages:
+            result_text += "\n" + "\n".join(self_effect_messages)
+        if target_status_messages:
+            result_text += "\n" + "\n".join(target_status_messages)
+        if action_messages:
+            result_text += "\n" + "\n".join(action_messages)
+        
+        return {
+            'total_damage': total_damage_dealt if not is_friendly_skill else -total_healing_done,
+            'result_text': result_text,
+            'target_health': 0  # AOE没有单一目标血量
+        }
+    
+    def apply_aoe_status_effects(self, attacker, targets, skill_info, is_friendly_skill):
+        """统一处理AOE技能的状态效果"""
+        from character.status_effects import add_status_effect
+        import json
+        
+        messages = []
+        
+        if not skill_info or not targets:
+            return messages
+        
+        try:
+            effects = json.loads(skill_info.get('effects', '{}'))
+        except (json.JSONDecodeError, TypeError):
+            effects = {}
+        
+        # 处理对目标的状态效果
+        target_effect_key = 'buff' if is_friendly_skill else 'debuff'
+        
+        if target_effect_key in effects:
+            effect_info = effects[target_effect_key]
+            effect_names = {
+                'strong': '强壮', 'breathing': '呼吸法', 'guard': '守护', 'shield': '护盾',
+                'burn': '烧伤', 'poison': '中毒', 'rupture': '破裂', 'bleeding': '流血',
+                'weak': '虚弱', 'vulnerable': '易伤'
+            }
+            
+            effect_name = effect_names.get(effect_info['type'], effect_info['type'])
+            effect_icon = "✨" if is_friendly_skill else "💀"
+            
+            for target in targets:
+                success = add_status_effect(
+                    target['id'],
+                    target_effect_key,
+                    effect_info['type'],
+                    effect_info['intensity'],
+                    effect_info['duration']
+                )
+                if success:
+                    if effect_info['type'] == 'shield':
+                        messages.append(f"{effect_icon} {target['name']} 获得了 {effect_info['intensity']} 点{effect_name}")
+                    else:
+                        messages.append(f"{effect_icon} {target['name']} 受到了 {effect_name}({effect_info['intensity']}) 效果，持续 {effect_info['duration']} 回合")
+        
+        return messages
     
     def apply_skill_status_effects(self, attacker, target, skill_info):
         """应用技能的状态效果"""
@@ -507,6 +736,106 @@ class SkillEffect(ABC):
             'damage_details': damage_details,
             'damage_type': skill_info.get('damage_type', 'physical')
         }
+    
+    def apply_self_effects(self, attacker, skill_info, skill_effect_value=0, effect_type='damage'):
+        """
+        应用技能的自我效果（自我伤害/治疗）
+        
+        Args:
+            attacker: 施法者角色信息
+            skill_info: 技能信息
+            skill_effect_value: 技能的实际效果值（伤害量或治疗量）
+            effect_type: 技能效果类型 ('damage', 'healing', 'buff', 'debuff', 'self')
+            
+        Returns:
+            list: 自我效果消息列表
+        """
+        messages = []
+        
+        if not skill_info:
+            return messages
+            
+        try:
+            effects = skill_info.get('effects', '{}')
+            effects_dict = json.loads(effects) if isinstance(effects, str) else effects
+            
+            # 处理自我伤害
+            if 'self_damage' in effects_dict:
+                self_damage = effects_dict['self_damage']
+                damage_amount = self._calculate_self_effect_amount(
+                    self_damage, skill_effect_value, effect_type
+                )
+                
+                if damage_amount > 0:
+                    # 重新获取施法者的最新血量信息，因为可能已经被主要技能效果修改
+                    from database.queries import get_character
+                    current_attacker = get_character(attacker['id'])
+                    if current_attacker:
+                        current_health = current_attacker.get('health', attacker['health'])
+                        new_health = max(0, current_health - damage_amount)
+                        update_character_health(attacker['id'], new_health)
+                        messages.append(f"💔 {attacker['name']} 承受了 {damage_amount} 点反噬伤害")
+            
+            # 处理自我治疗
+            if 'self_heal' in effects_dict:
+                self_heal = effects_dict['self_heal']
+                heal_amount = self._calculate_self_effect_amount(
+                    self_heal, skill_effect_value, effect_type
+                )
+                
+                if heal_amount > 0:
+                    # 重新获取施法者的最新血量信息，因为可能已经被主要技能效果修改
+                    from database.queries import get_character
+                    current_attacker = get_character(attacker['id'])
+                    if current_attacker:
+                        max_health = current_attacker.get('max_health', 100)
+                        current_health = current_attacker.get('health', attacker['health'])
+                        new_health = min(max_health, current_health + heal_amount)
+                        actual_heal = new_health - current_health
+                        if actual_heal > 0:
+                            update_character_health(attacker['id'], new_health)
+                            messages.append(f"💚 {attacker['name']} 回复了 {actual_heal} 点生命值")
+                    
+        except Exception as e:
+            print(f"处理自我效果时出错: {e}")
+            
+        return messages
+    
+    def _calculate_self_effect_amount(self, effect_config, skill_effect_value, effect_type):
+        """
+        计算自我效果的数值
+        
+        Args:
+            effect_config: 自我效果配置
+            skill_effect_value: 技能的实际效果值
+            effect_type: 技能效果类型
+            
+        Returns:
+            int: 计算后的自我效果数值
+        """
+        if isinstance(effect_config, (int, float)):
+            # 简单数值，直接返回
+            return int(effect_config)
+        elif isinstance(effect_config, dict):
+            # 固定数值
+            if 'amount' in effect_config:
+                return effect_config['amount']
+            
+            # 百分比计算
+            if 'percentage' in effect_config:
+                percentage = effect_config['percentage']
+                return int(skill_effect_value * percentage / 100)
+            
+            # 基于类型的百分比计算
+            if 'damage_percentage' in effect_config and effect_type in ('damage', 'aoe'):
+                percentage = effect_config['damage_percentage']
+                return int(skill_effect_value * percentage / 100)
+            
+            if 'healing_percentage' in effect_config and effect_type in ('healing', 'aoe'):
+                percentage = effect_config['healing_percentage']
+                return int(skill_effect_value * percentage / 100)
+        
+        return 0
     
     @abstractmethod
     def apply_special_effects(self, attacker, target, skill_info, damage_result):
