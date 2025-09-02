@@ -18,8 +18,31 @@ class TurnManager:
     
     def end_turn_for_character(self, character_id: int) -> List[str]:
         """结束指定角色的回合，处理状态效果，并开始新回合"""
+        # 获取角色初始状态
+        from database.queries import get_character
+        initial_character = get_character(character_id)
+        if not initial_character:
+            return []
+        
+        initial_health = initial_character['health']
+        
         # 处理回合结束效果
         end_messages = process_end_turn_effects(character_id)
+        
+        # 检查角色是否在回合结束效果中倒下
+        current_character = get_character(character_id)
+        if current_character and current_character['health'] <= 0 and initial_health > 0:
+            # 角色刚刚倒下，不处理其他状态，直接返回倒下信息
+            return end_messages
+        
+        # 如果角色没有倒下，继续处理其他状态
+        # 处理混乱值状态
+        from character.stagger_manager import stagger_manager
+        stagger_success, stagger_msg = stagger_manager.process_stagger_turn(character_id)
+        if stagger_success and stagger_msg:
+            if not end_messages:
+                end_messages = []
+            end_messages.append(stagger_msg)
         
         # 恢复行动次数（开始新回合）
         self._restore_single_character_actions(character_id)
@@ -72,10 +95,8 @@ class TurnManager:
         if len(all_messages) == 1:  # 只有回合标题，没有其他效果
             all_messages.append("本回合没有状态效果触发")
         
-        # 恢复所有角色的行动次数
-        restored_count = restore_character_actions()
-        if restored_count > 0:
-            all_messages.append(f"\n✨ 已恢复 {restored_count} 个角色的行动次数")
+        # 恢复所有角色的行动次数（不播报）
+        restore_character_actions()
         
         # 处理回合开始时的状态效果（比如加速）
         from character.status_effects import process_start_turn_effects

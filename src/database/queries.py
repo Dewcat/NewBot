@@ -321,9 +321,9 @@ def reset_character(character_id):
         
         max_health, actions_per_turn = result
         
-        # 重置角色状态：恢复满血、清空status字段、恢复行动次数
+        # 重置角色状态：恢复满血、清空status字段、恢复行动次数、重置混乱值
         cursor.execute(
-            "UPDATE characters SET health = ?, status = '{}', current_actions = ? WHERE id = ?",
+            "UPDATE characters SET health = ?, status = '{}', current_actions = ?, stagger_value = max_stagger_value, stagger_status = 'normal', stagger_turns_remaining = 0 WHERE id = ?",
             (max_health, actions_per_turn, character_id)
         )
         
@@ -604,8 +604,8 @@ def reset_all_characters():
     cursor = conn.cursor()
     
     try:
-        # 恢复所有角色的生命值到最大值，重置行动次数
-        cursor.execute("UPDATE characters SET health = max_health, current_actions = actions_per_turn")
+        # 恢复所有角色的生命值到最大值，重置行动次数，重置混乱值
+        cursor.execute("UPDATE characters SET health = max_health, current_actions = actions_per_turn, stagger_value = max_stagger_value, stagger_status = 'normal', stagger_turns_remaining = 0")
         
         # 清除所有角色的状态（包括冷却时间）
         cursor.execute("UPDATE characters SET status = '{}'")

@@ -31,16 +31,23 @@ def format_character_status(character):
     actions_per_turn = character.get('actions_per_turn', 1)
     current_actions = character.get('current_actions', 1)
     
-    # 角色类型显示
-    type_text = "友方角色" if char_type == "friendly" else "敌方角色"
+    # 获取当前人格信息
+    from character.persona import get_current_persona
+    current_persona = None
+    try:
+        # 尝试从角色名提取核心角色名（去掉括号部分）
+        core_name = name.split('(')[0] if '(' in name else name
+        if core_name in ["珏", "露", "莹", "笙", "曦"]:
+            current_persona = get_current_persona(core_name)
+    except:
+        pass
     
-    # 战斗状态
-    if health <= 0:
-        battle_status = "💀 已倒下（无法战斗）"
-    elif in_battle:
-        battle_status = "⚔️ 战斗中"
-    else:
-        battle_status = "🏠 休息中"
+    # 基础状态文本
+    status_text = f"📋 {name}\n"
+    
+    # 人格信息
+    if current_persona:
+        status_text += f"【人格：{current_persona}】\n"
     
     # 生命值状态
     health_percent = (health / max_health * 100) if max_health > 0 else 0
@@ -55,26 +62,85 @@ def format_character_status(character):
     else:
         health_emoji = "❤️"
     
-    # 基础状态文本
-    status_text = f"""📋 {name} ({type_text})
-{health_emoji} 生命值: {health}/{max_health} ({health_percent:.0f}%)
-⚔️ 攻击力: {attack}
-🛡️ 防御力: {defense}
-🎯 状态: {battle_status}
-⚡ 行动次数: {current_actions}/{actions_per_turn}"""
+    status_text += f"{health_emoji} 生命值: {health}/{max_health}\n"
+    
+    # 添加混乱值信息
+    stagger_value = character.get('stagger_value', 150)
+    max_stagger = character.get('max_stagger_value', 150)
+    stagger_status = character.get('stagger_status', 'normal')
+    if stagger_status == 'staggered':
+        status_text += f"🧠 理智值: {stagger_value}/{max_stagger} (混乱中)\n"
+    else:
+        status_text += f"🧠 理智值: {stagger_value}/{max_stagger}\n"
+    
+    # 攻击和防御
+    status_text += f"⚔️ 攻击等级: {attack}\n"
+    status_text += f"🛡️ 防御等级: {defense}\n"
+    
+    # 战斗状态
+    if health <= 0:
+        battle_status = "💀 已倒下"
+    elif in_battle:
+        battle_status = "⚔️ 战斗中"
+    else:
+        battle_status = "🏠 休息中"
+    
+    status_text += f"🎯 状态: {battle_status}\n"
+    status_text += f"⚡ 行动次数: {current_actions}/{actions_per_turn}\n"
     
     # 添加状态效果信息
     character_id = character.get('id')
     if character_id:
         status_effects_text = get_status_effects_display(character_id)
-        status_text += f"\n🌟 状态效果: {status_effects_text}"
+        if status_effects_text != "无状态效果":
+            status_text += f"\n🌟 状态效果: {status_effects_text}\n"
     
     # 处理冷却时间信息
     cooldown_info = format_cooldowns(character.get('status', {}))
-    if cooldown_info:
-        status_text += f"\n\n⏰ 技能冷却状态:\n{cooldown_info}"
+    if cooldown_info and cooldown_info != "所有技能可用 ✅":
+        status_text += f"\n⏰ 技能冷却状态:\n{cooldown_info}"
     
     return status_text
+
+def format_stagger_status(character):
+    """
+    格式化混乱值状态信息
+    
+    Args:
+        character (dict): 角色信息字典
+        
+    Returns:
+        str: 格式化后的混乱值状态文本
+    """
+    if not character:
+        return ""
+    
+    stagger_value = character.get('stagger_value', 100)
+    max_stagger_value = character.get('max_stagger_value', 100)
+    stagger_status = character.get('stagger_status', 'normal')
+    stagger_turns_remaining = character.get('stagger_turns_remaining', 0)
+    
+    # 计算混乱值百分比
+    stagger_percent = (stagger_value / max_stagger_value * 100) if max_stagger_value > 0 else 0
+    
+    # 选择表情符号
+    if stagger_status == 'staggered':
+        stagger_emoji = "💫"
+        status_suffix = f" (混乱中，剩余{stagger_turns_remaining}回合)"
+    elif stagger_percent >= 80:
+        stagger_emoji = "🟢"
+        status_suffix = ""
+    elif stagger_percent >= 50:
+        stagger_emoji = "🟡"
+        status_suffix = ""
+    elif stagger_percent >= 20:
+        stagger_emoji = "🟠"
+        status_suffix = ""
+    else:
+        stagger_emoji = "🔴"
+        status_suffix = " (危险！)"
+    
+    return f"{stagger_emoji} 混乱值: {stagger_value}/{max_stagger_value} ({stagger_percent:.0f}%){status_suffix}"
 
 def format_cooldowns(status):
     """

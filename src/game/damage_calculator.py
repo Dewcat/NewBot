@@ -1,6 +1,10 @@
 import random
 import re
 import json
+from typing import List
+
+# 导入混乱值管理器
+from character.stagger_manager import stagger_manager
 
 def parse_dice_formula(formula):
     """
@@ -133,11 +137,14 @@ def calculate_advanced_damage(skill, attacker, target):
     }
     resistance_reduction = calculate_resistance_reduction(damage_type, target_resistances)
     
-    # 5. 计算最终伤害
-    final_damage = int(base_damage * attack_defense_modifier * race_bonus * resistance_reduction)
+    # 5. 混乱状态伤害加成
+    stagger_multiplier = stagger_manager.get_stagger_damage_multiplier(target.get('id'))
+    
+    # 6. 计算最终伤害
+    final_damage = int(base_damage * attack_defense_modifier * race_bonus * resistance_reduction * stagger_multiplier)
     final_damage = max(1, final_damage)  # 最少造成1点伤害
     
-    # 6. 构建伤害详情文本
+    # 7. 构建伤害详情文本
     damage_details = []
     damage_details.append(f"基础伤害: {dice_detail}")
     
@@ -160,9 +167,36 @@ def calculate_advanced_damage(skill, attacker, target):
         damage_type_name = "物理" if damage_type == "physical" else "魔法"
         damage_details.append(f"{damage_type_name}抗性: -{resistance_percent}%")
     
-    damage_details.append(f"原始伤害: {final_damage}")
+    if stagger_multiplier > 1.0:
+        damage_details.append(f"混乱状态: ×{stagger_multiplier:.1f}")
+    
+    # 不再显示原始伤害
     
     return final_damage, " → ".join(damage_details)
+
+def apply_damage_with_stagger(target_id: int, damage: int) -> List[str]:
+    """
+    应用伤害并处理混乱值
+    
+    Args:
+        target_id: 目标角色ID
+        damage: 伤害值
+        
+    Returns:
+        List[str]: 状态消息列表
+    """
+    messages = []
+    
+    # 1. 扣除混乱值
+    success, stagger_msg, enters_stagger = stagger_manager.reduce_stagger(target_id, damage)
+    if success and stagger_msg:
+        messages.append(stagger_msg)
+    
+    # 2. 如果进入混乱状态，伤害会在下次攻击时加成
+    if enters_stagger:
+        messages.append("⚠️ 目标进入混乱状态，下次受到的伤害将提升至200%！")
+    
+    return messages
 
 def calculate_damage_from_formula(formula):
     """

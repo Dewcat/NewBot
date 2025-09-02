@@ -93,26 +93,26 @@ async def select_attacker(update: Update, context: CallbackContext) -> int:
                 continue
             else:
                 skill_text = f"{skill['name']}"
-                if skill_info.get('cooldown', 0) > 0:
-                    skill_text += f" (冷却: {skill_info['cooldown']}次行动)"
                 
-                # 添加技能类型标识
-                effects = skill_info.get('effects', '{}')
+                # 只添加伤害公式，不添加效果描述
+                damage_formula = skill_info.get('damage_formula', '')
+                if damage_formula:
+                    skill_text += f" ({damage_formula})"
+                
+                # 根据技能类型添加简单的图标标识
                 skill_category = skill_info.get('skill_category', 'damage')
                 
-                try:
-                    effects_dict = json.loads(effects) if isinstance(effects, str) else effects
-                    if skill_category == 'healing':
-                        skill_text += " 💚"  # 治疗技能标识
-                    elif skill_category == 'buff':
-                        skill_text += " ✨"  # buff技能标识
-                    elif skill_category == 'debuff':
-                        skill_text += " 💀"  # debuff技能标识
-                    elif skill_category == 'self':
-                        skill_text += " 🧘"  # 自我技能标识
-                    else:
-                        skill_text += " ⚔️"   # 伤害技能标识
-                except:
+                if skill_category == 'healing':
+                    skill_text += " 💚"
+                elif skill_category == 'buff':
+                    skill_text += " ✨"
+                elif skill_category == 'debuff':
+                    skill_text += " 💀"
+                elif skill_category == 'self':
+                    skill_text += " 🧘"
+                elif skill_category == 'aoe':
+                    skill_text += " 🌀"
+                else:
                     skill_text += " ⚔️"
         else:
             skill_text = f"{skill['name']} ⚔️"
@@ -167,6 +167,8 @@ async def show_target_selection(update: Update, context: CallbackContext, skill_
     is_buff_skill = False
     is_debuff_skill = False
     is_self_skill = False
+    is_aoe_skill = False
+    aoe_type = None
     skill_category = None
     
     if skill_info:
@@ -175,6 +177,11 @@ async def show_target_selection(update: Update, context: CallbackContext, skill_
         is_buff_skill = (skill_category == 'buff')
         is_debuff_skill = (skill_category == 'debuff')
         is_self_skill = (skill_category == 'self')
+        
+        # 检查是否为AOE技能
+        if skill_category.startswith('aoe_'):
+            is_aoe_skill = True
+            aoe_type = skill_category.split('_', 1)[1]  # 获取AOE类型：damage, healing, buff, debuff
     
     # 如果是self技能，直接对自己生效，跳过目标选择
     if is_self_skill:
@@ -189,6 +196,27 @@ async def show_target_selection(update: Update, context: CallbackContext, skill_
         
         # 直接对自己使用技能
         result_message = execute_skill_effect(attacker, attacker, skill_info)
+        
+        # 消耗攻击者的行动次数
+        if not use_character_action(attacker['id']):
+            result_message += "\n⚠️ 警告：消耗行动次数失败"
+        
+        await query.edit_message_text(result_message)
+        return ConversationHandler.END
+    
+    # 如果是AOE技能，跳过目标选择，直接执行
+    if is_aoe_skill:
+        # 验证攻击者状态
+        if not attacker.get('in_battle'):
+            await query.edit_message_text("技能使用失败：施法者必须在战斗中。")
+            return ConversationHandler.END
+        
+        if attacker.get('health', 0) <= 0:
+            await query.edit_message_text("技能使用失败：施法者已经无法战斗。")
+            return ConversationHandler.END
+        
+        # AOE技能不需要选择目标，直接执行
+        result_message = execute_skill_effect(attacker, None, skill_info)
         
         # 消耗攻击者的行动次数
         if not use_character_action(attacker['id']):
@@ -315,118 +343,87 @@ def execute_skill_effect(attacker, target, skill_info):
     """执行技能效果并返回结果消息"""
     skill_name = skill_info['name'] if skill_info else "普通攻击"
     
-    # 判断技能类型 - 统一使用 skill_category
-    is_heal_skill = False
-    is_buff_skill = False
-    is_debuff_skill = False
-    is_self_skill = False
-    is_aoe_skill = False
-    skill_category = None
+    # 判断技能类型 - 使用新的分类系统
+    skill_category = skill_info.get('skill_category', 'damage') if skill_info else 'damage'
     
-    if skill_info:
-        skill_category = skill_info.get('skill_category', 'damage')
-        is_heal_skill = (skill_category == 'healing')
-        is_buff_skill = (skill_category == 'buff')
-        is_debuff_skill = (skill_category == 'debuff')
-        is_self_skill = (skill_category == 'self')
-        is_aoe_skill = (skill_category == 'aoe')
-    
-    # 根据技能类型设置不同的描述
-    if is_aoe_skill:
-        # 判断AOE技能的具体效果类型
-        aoe_type = "群体攻击"  # 默认为攻击
-        aoe_icon = "💥"
-        aoe_title = "AOE攻击结果"
-        
-        if skill_info:
-            # 检查技能公式判断是否为治疗AOE
-            damage_formula = skill_info.get('damage_formula', '0')
-            if damage_formula == '0' or not damage_formula:
-                # 无伤害公式，检查效果
-                effects = skill_info.get('effects', '{}')
-                try:
-                    effects_dict = json.loads(effects) if isinstance(effects, str) else effects
-                    
-                    # 检查是否有治疗相关的效果
-                    if 'healing' in effects_dict or any('heal' in str(key).lower() for key in effects_dict.keys()):
-                        aoe_type = "群体治疗"
-                        aoe_icon = "💚"
-                        aoe_title = "AOE治疗结果"
-                    # 检查是否只有负面状态效果（debuff）- 必须在buff之前检查
-                    elif any(str(key).lower() == 'debuff' or 'weakness' in str(key).lower() for key in effects_dict.keys()):
-                        aoe_type = "群体削弱"
-                        aoe_icon = "💀"
-                        aoe_title = "AOE削弱结果"
-                    # 检查是否只有正面状态效果（buff）
-                    elif any(str(key).lower() == 'buff' or 'boost' in str(key).lower() for key in effects_dict.keys()):
-                        aoe_type = "群体强化"
-                        aoe_icon = "✨"
-                        aoe_title = "AOE强化结果"
-                except:
-                    pass
-            else:
-                # 有伤害公式的都是攻击技能，不管是否有额外的治疗效果
-                pass  # 保持默认的攻击类型
-        
-        result_message = f"{aoe_icon} {aoe_title} {aoe_icon}\n\n"
-        result_message += f"{attacker['name']} 使用 {skill_name} 发动了{aoe_type}！\n\n"
-    elif is_self_skill:
+    # 根据技能主类型决定标题和描述
+    if skill_category == 'aoe_damage':
+        result_message = f"💥 群体攻击结果 💥\n\n"
+        result_message += f"{attacker['name']} 使用 {skill_name} 发动了群体攻击！\n\n"
+    elif skill_category == 'aoe_healing':
+        result_message = f"💚 群体治疗结果 💚\n\n"
+        result_message += f"{attacker['name']} 使用 {skill_name} 发动了群体治疗！\n\n"
+    elif skill_category == 'aoe_buff':
+        result_message = f"✨ 群体强化结果 ✨\n\n"
+        result_message += f"{attacker['name']} 使用 {skill_name} 发动了群体强化！\n\n"
+    elif skill_category == 'aoe_debuff':
+        result_message = f"💀 群体削弱结果 💀\n\n"
+        result_message += f"{attacker['name']} 使用 {skill_name} 发动了群体削弱！\n\n"
+    elif skill_category == 'self':
         result_message = f"🧘 自我强化结果 🧘\n\n"
         result_message += f"{attacker['name']} 使用 {skill_name} 强化了自己！\n\n"
-    elif is_heal_skill:
+    elif skill_category == 'healing':
         result_message = f"💚 治疗结果 💚\n\n"
         result_message += f"{attacker['name']} 使用 {skill_name} 治疗了 {target['name']}！\n\n"
-    elif is_buff_skill:
+    elif skill_category == 'buff':
         result_message = f"✨ 强化结果 ✨\n\n"
         result_message += f"{attacker['name']} 使用 {skill_name} 强化了 {target['name']}！\n\n"
-    elif is_debuff_skill:
+    elif skill_category == 'debuff':
         result_message = f"💀 削弱结果 💀\n\n"
         result_message += f"{attacker['name']} 使用 {skill_name} 削弱了 {target['name']}！\n\n"
     else:
         result_message = f"⚔️ 战斗结果 ⚔️\n\n"
         result_message += f"{attacker['name']} 使用 {skill_name} 攻击了 {target['name']}！\n\n"
     
-    # 使用技能效果系统执行攻击
+    # 使用技能效果系统执行技能
     skill_result = skill_registry.execute_skill(attacker, target, skill_info)
     
-    # 添加技能效果描述
+    # 添加主效果结果
     result_message += skill_result['result_text'] + "\n\n"
     
-    # 根据技能类型决定是否显示生命值状态
-    if not (is_self_skill or is_buff_skill or is_debuff_skill or is_aoe_skill):
-        # 只有单体攻击和治疗技能才显示单个目标生命值状态
-        target = get_character(target['id'])
-        
-        if target['health'] <= 0:
-            result_message += f"💀 {target['name']} 已被击倒！"
-        else:
-            result_message += f"❤️ {target['name']} 剩余生命值: {target['health']}/{target['max_health']}"
-    elif is_aoe_skill:
-        # AOE技能显示所有目标的状态概览
+    # 根据技能类型决定状态显示
+    if skill_category.startswith('aoe_'):
+        # AOE技能显示相关目标状态
         from database.queries import get_battle_characters
         battle_chars = get_battle_characters()
         
-        if skill_info and skill_info.get('damage_formula', '0') != '0':
-            # AOE伤害技能：显示敌方状态
+        if skill_category == 'aoe_damage':
+            # AOE伤害：显示敌方状态
             enemies = [char for char in battle_chars 
                       if char['character_type'] != attacker['character_type']]
             if enemies:
-                result_message += f"\n💀 敌方状态："
+                result_message += f"💀 敌方状态："
                 for enemy in enemies:
                     if enemy['health'] <= 0:
                         result_message += f"\n  💀 {enemy['name']} 已被击倒"
                     else:
                         result_message += f"\n  ❤️ {enemy['name']}: {enemy['health']}/{enemy['max_health']}"
-        else:
-            # AOE治疗/buff技能：显示友方状态
+        elif skill_category in ['aoe_healing', 'aoe_buff']:
+            # AOE治疗/buff：显示友方状态
             allies = [char for char in battle_chars 
                      if char['character_type'] == attacker['character_type']]
             if allies:
-                result_message += f"\n💚 友方状态："
+                result_message += f"💚 友方状态："
                 for ally in allies:
                     result_message += f"\n  ❤️ {ally['name']}: {ally['health']}/{ally['max_health']}"
+        elif skill_category == 'aoe_debuff':
+            # AOE削弱：显示敌方状态（但不显示伤害信息）
+            enemies = [char for char in battle_chars 
+                      if char['character_type'] != attacker['character_type']]
+            if enemies:
+                result_message += f"💀 敌方状态："
+                for enemy in enemies:
+                    result_message += f"\n  ❤️ {enemy['name']}: {enemy['health']}/{enemy['max_health']}"
+    elif skill_category not in ['self', 'buff', 'debuff']:
+        # 单体攻击和治疗技能显示目标生命值状态
+        if target:
+            target = get_character(target['id'])
+            if target['health'] <= 0:
+                result_message += f"💀 {target['name']} 已被击倒！"
+            else:
+                result_message += f"❤️ {target['name']} 剩余生命值: {target['health']}/{target['max_health']}"
     else:
-        # self技能、buff技能、debuff技能不显示生命值，只显示效果完成
+        # self, buff, debuff 技能只显示完成信息
         result_message += f"✅ 技能效果已生效！"
     
     return result_message
@@ -463,6 +460,10 @@ ENEMY_SELECTING_ATTACKER, ENEMY_SELECTING_TARGET, ENEMY_SELECTING_SKILL = 3, 4, 
 
 async def start_enemy_attack(update: Update, context: CallbackContext) -> int:
     """开始敌方攻击流程"""
+    # 记录发起命令的用户ID和原始群组ID
+    context.user_data['enemy_attack_initiator'] = update.effective_user.id
+    context.user_data['original_chat_id'] = update.effective_chat.id
+    
     # 获取有行动次数的敌方角色
     enemy_characters = get_characters_with_actions("enemy")
     
@@ -499,7 +500,12 @@ async def start_enemy_attack(update: Update, context: CallbackContext) -> int:
 async def enemy_select_attacker(update: Update, context: CallbackContext) -> int:
     """处理敌方攻击者选择"""
     query = update.callback_query
-    await query.answer()
+    
+    # 验证是否为发起命令的用户
+    initiator_id = context.user_data.get('enemy_attack_initiator')
+    if query.from_user.id != initiator_id:
+        await query.answer("只有发起敌方攻击命令的人可以操作此界面。", show_alert=True)
+        return ENEMY_SELECTING_ATTACKER
     
     attacker_id = int(query.data.split('_')[2])
     attacker = get_character(attacker_id)
@@ -514,58 +520,102 @@ async def enemy_select_attacker(update: Update, context: CallbackContext) -> int
     
     context.user_data['enemy_attacker_id'] = attacker_id
     
+    # # 在群组中显示已选择的攻击者，技能选择通过编号进行
+    # await query.edit_message_text(
+    #     f"⚔️ 敌方攻击进行中...\n"
+    #     f"攻击者: {attacker['name']}\n"
+    #     f"操作者: @{query.from_user.username or query.from_user.first_name}\n\n"
+    #     f"🔒 请选择技能编号 (技能信息仅操作者可见)\n"
+    # )
+    
     # 获取攻击者的技能
     skills = get_character_skills(attacker_id)
     
     if not skills:
-        await query.edit_message_text("该角色没有可用的技能。")
+        await query.edit_message_text(f"角色 {attacker['name']} 没有可用的技能。")
         return ConversationHandler.END
     
-    # 创建技能选择键盘
+    # 创建技能选择键盘 - 只显示编号
     keyboard = []
+    available_skills = []  # 存储可用技能信息
+    skill_info_text = "📋 可用技能列表:\n\n"
+    skill_index = 1
+    
     for skill in skills:
         # 检查技能是否在冷却中
         if is_skill_on_cooldown(attacker_id, skill['id']):
-            cooldown_remaining = get_skill_cooldown_remaining(attacker_id, skill['id'])
-            skill_text = f"{skill['name']} (冷却中: {cooldown_remaining}次行动)"
-            # 冷却中的技能不可选择
-            continue
-        else:
-            # 判断技能类型并添加图标 - 统一使用 skill_category
-            skill_info = get_skill(skill['id'])
-            skill_category = skill_info.get('skill_category', 'damage') if skill_info else 'damage'
-            
-            if skill_category == 'healing':
-                skill_type_icon = "💚"  # 治疗技能
-            elif skill_category == 'buff':
-                skill_type_icon = "✨"  # buff技能
-            elif skill_category == 'debuff':
-                skill_type_icon = "💀"  # debuff技能
-            elif skill_category == 'self':
-                skill_type_icon = "🧘"  # 自我技能
-            else:
-                skill_type_icon = "⚔️"  # 伤害技能
-            
-            skill_text = f"{skill_type_icon} {skill['name']}"
+            continue  # 跳过冷却中的技能
         
-        keyboard.append([
-            InlineKeyboardButton(skill_text, callback_data=f"enemy_skill_{skill['id']}")
-        ])
+        # 获取技能详细信息
+        skill_info = get_skill(skill['id'])
+        if skill_info:
+            available_skills.append({
+                'index': skill_index,
+                'skill': skill,
+                'skill_info': skill_info
+            })
+            
+            # 按钮只显示编号
+            keyboard.append([
+                InlineKeyboardButton(f"{skill_index}", callback_data=f"enemy_skill_{skill['id']}")
+            ])
+            
+            # 构建技能信息文本
+            skill_category = skill_info.get('skill_category', 'damage')
+            damage_formula = skill_info.get('damage_formula', '')
+            
+            # 添加技能图标
+            skill_icon = "⚔️"
+            if skill_category == 'healing':
+                skill_icon = "💚"
+            elif skill_category == 'buff':
+                skill_icon = "✨"
+            elif skill_category == 'debuff':
+                skill_icon = "💀"
+            elif skill_category == 'self':
+                skill_icon = "🧘"
+            elif skill_category.startswith('aoe_'):
+                skill_icon = "🌀"
+            
+            # 添加到技能列表文本
+            skill_info_text += f"{skill_index}. {skill_icon} {skill_info['name']}"
+            if damage_formula:
+                skill_info_text += f" ({damage_formula})"
+            skill_info_text += "\n"
+            
+            skill_index += 1
     
     if not keyboard:
-        await query.edit_message_text("该角色没有可用的技能（全部在冷却中）。")
+        await query.edit_message_text(f"角色 {attacker['name']} 没有可用的技能（全部在冷却中）。")
         return ConversationHandler.END
     
+    # 保存技能信息供后续使用
+    context.user_data['available_skills'] = available_skills
+    
+    # 显示所有技能信息给操作者
+    await query.answer(skill_info_text, show_alert=True)
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
-    message = f"攻击者: {attacker['name']}\n选择要使用的技能:"
-    await query.edit_message_text(message, reply_markup=reply_markup)
+    await query.edit_message_text(
+        f"⚔️ 敌方攻击进行中...\n"
+        f"攻击者: {attacker['name']}\n\n"
+        f"选择技能编号:",
+        reply_markup=reply_markup
+    )
+    
+    return ENEMY_SELECTING_SKILL
     
     return ENEMY_SELECTING_SKILL
 
 async def enemy_select_skill(update: Update, context: CallbackContext) -> int:
     """处理敌方技能选择"""
     query = update.callback_query
-    await query.answer()
+    
+    # 验证是否为发起命令的用户
+    initiator_id = context.user_data.get('enemy_attack_initiator')
+    if query.from_user.id != initiator_id:
+        await query.answer("只有发起敌方攻击命令的人可以操作此界面。", show_alert=True)
+        return ENEMY_SELECTING_SKILL
     
     skill_id = int(query.data.split('_')[2])
     
@@ -573,22 +623,44 @@ async def enemy_select_skill(update: Update, context: CallbackContext) -> int:
     attacker_id = context.user_data['enemy_attacker_id']
     if is_skill_on_cooldown(attacker_id, skill_id):
         cooldown_remaining = get_skill_cooldown_remaining(attacker_id, skill_id)
-        await query.edit_message_text(f"技能还在冷却中，剩余 {cooldown_remaining} 次行动。")
-        return ConversationHandler.END
+        await query.answer(f"技能还在冷却中，剩余 {cooldown_remaining} 次行动。", show_alert=True)
+        return ENEMY_SELECTING_SKILL
     
     skill_info = get_skill(skill_id)
     if not skill_info:
-        await query.edit_message_text("找不到指定的技能。")
-        return ConversationHandler.END
+        await query.answer("找不到指定的技能。", show_alert=True)
+        return ENEMY_SELECTING_SKILL
+    
+    # 显示简单的确认信息给操作者
+    await query.answer(f"✅ 已选择: {skill_info['name']}")
     
     context.user_data['enemy_skill_id'] = skill_id
     context.user_data['enemy_skill_info'] = skill_info
+    
+    # 获取攻击者信息
+    attacker = get_character(context.user_data['enemy_attacker_id'])
+    attacker_name = attacker['name'] if attacker else '未知'
+    
+    # # 更新群组消息，显示已选择的技能
+    # await query.edit_message_text(
+    #     f"⚔️ 敌方攻击进行中...\n"
+    #     f"攻击者: {attacker_name}\n"
+    #     f"技能: {skill_info['name']}\n\n"
+    #     f"目标选择中..."
+    # )
     
     return await enemy_show_target_selection(update, context, skill_info)
 
 async def enemy_show_target_selection(update: Update, context: CallbackContext, skill_info):
     """显示敌方攻击目标选择界面"""
     query = update.callback_query
+    
+    # 验证是否为发起命令的用户
+    initiator_id = context.user_data.get('enemy_attack_initiator')
+    if query.from_user.id != initiator_id:
+        await query.answer("只有发起敌方攻击命令的人可以操作此界面。", show_alert=True)
+        return ENEMY_SELECTING_TARGET
+    
     attacker_id = context.user_data['enemy_attacker_id']
     attacker = get_character(attacker_id)
     
@@ -597,6 +669,7 @@ async def enemy_show_target_selection(update: Update, context: CallbackContext, 
     is_buff_skill = False
     is_debuff_skill = False
     is_self_skill = False
+    is_aoe_skill = False
     skill_category = None
     
     if skill_info:
@@ -605,6 +678,7 @@ async def enemy_show_target_selection(update: Update, context: CallbackContext, 
         is_buff_skill = (skill_category == 'buff')
         is_debuff_skill = (skill_category == 'debuff')
         is_self_skill = (skill_category == 'self')
+        is_aoe_skill = skill_category.startswith('aoe_')
     
     # 如果是self技能，直接对自己生效，跳过目标选择
     if is_self_skill:
@@ -624,7 +698,27 @@ async def enemy_show_target_selection(update: Update, context: CallbackContext, 
         if not use_character_action(attacker['id']):
             result_message += "\n⚠️ 警告：消耗行动次数失败"
         
-        result_message = f"敌方技能使用结果:\n{result_message}"
+        await query.edit_message_text(result_message)
+        return ConversationHandler.END
+    
+    # 如果是AOE技能，跳过目标选择，直接执行
+    if is_aoe_skill:
+        # 验证攻击者状态
+        if not attacker.get('in_battle'):
+            await query.edit_message_text("技能使用失败：施法者必须在战斗中。")
+            return ConversationHandler.END
+        
+        if attacker.get('health', 0) <= 0:
+            await query.edit_message_text("技能使用失败：施法者已经无法战斗。")
+            return ConversationHandler.END
+        
+        # 直接执行AOE技能
+        result_message = execute_skill_effect(attacker, None, skill_info)
+        
+        # 消耗攻击者的行动次数
+        if not use_character_action(attacker['id']):
+            result_message += "\n⚠️ 警告：消耗行动次数失败"
+        
         await query.edit_message_text(result_message)
         return ConversationHandler.END
     
@@ -686,6 +780,12 @@ async def enemy_select_target(update: Update, context: CallbackContext) -> int:
     query = update.callback_query
     await query.answer()
     
+    # 验证是否为发起命令的用户
+    initiator_id = context.user_data.get('enemy_attack_initiator')
+    if query.from_user.id != initiator_id:
+        await query.answer("只有发起敌方攻击命令的人可以操作此界面。", show_alert=True)
+        return ENEMY_SELECTING_TARGET
+    
     target_id = int(query.data.split('_')[2])
     attacker_id = context.user_data['enemy_attacker_id']
     skill_id = context.user_data['enemy_skill_id']
@@ -713,10 +813,7 @@ async def enemy_select_target(update: Update, context: CallbackContext) -> int:
     if not use_character_action(attacker['id']):
         result += "\n⚠️ 警告：消耗行动次数失败"
     
-    # 显示战斗结果
-    result_message = f"敌方攻击结果:\n{result}"
-    await query.edit_message_text(result_message)
-    
+    await query.edit_message_text(result)
     return ConversationHandler.END
 
 async def cancel_enemy_attack(update: Update, context: CallbackContext) -> int:
@@ -743,5 +840,5 @@ def get_enemy_attack_conv_handler():
             CallbackQueryHandler(cancel_enemy_attack, pattern=r"^cancel$")
         ],
         name="enemy_attack",
-        per_user=False
+        per_user=True
     )

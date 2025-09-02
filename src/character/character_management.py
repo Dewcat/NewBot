@@ -22,6 +22,15 @@ from database.queries import (
     remove_all_from_battle
 )
 from character.status_formatter import format_character_status, format_character_list, format_battle_participants
+from character.persona import (
+    get_available_personas,
+    get_character_personas,
+    switch_persona,
+    create_core_character_if_not_exists,
+    get_persona_info,
+    is_core_character,
+    get_current_persona
+)
 from game.turn_manager import turn_manager
 
 # 配置日志
@@ -276,7 +285,7 @@ async def battle_join(update: Update, context: CallbackContext) -> None:
             result_message += f"\n✅ 成功加入 {len(success_characters)} 个角色:\n{', '.join(success_characters)}"
         
         if dead_characters:
-            result_message += f"\n💀 无法加入（已死亡）:\n{', '.join(dead_characters)}"
+            result_message += f"\n💀 无法加入（已）:\n{', '.join(dead_characters)}"
             
         if not_found_characters:
             result_message += f"\n❓ 找不到的角色:\n{', '.join(not_found_characters)}"
@@ -471,6 +480,151 @@ async def show_battle_status(update: Update, context: CallbackContext) -> None:
     message = format_battle_participants()
     await update.message.reply_text(message)
 
+async def show_personas(update: Update, context: CallbackContext) -> None:
+    """显示可用的人格系统"""
+    args = context.args
+    
+    if not args:
+        # 显示所有可用的人格
+        personas = get_available_personas()
+        message = "🎭 核心角色人格系统\n\n"
+        
+        for character_name, character_personas in personas.items():
+            message += f"👤 **{character_name}**\n"
+            for persona_name, persona_data in character_personas.items():
+                message += f"  • {persona_name}: {persona_data['description']}\n"
+            message += "\n"
+        
+        message += "📖 使用说明:\n"
+        message += "• /personas <角色名> - 查看指定角色的人格\n"
+        message += "• /switch <角色名> <人格名> - 切换角色人格\n"
+        message += "• /create_core <角色名> - 创建核心角色\n"
+        
+        await update.message.reply_text(message)
+    else:
+        # 显示指定角色的人格
+        character_name = args[0]
+        character_personas = get_character_personas(character_name)
+        
+        if not character_personas:
+            await update.message.reply_text(f"角色 '{character_name}' 不支持人格切换。\n支持的角色: 珏、露、莹、笙、曦")
+            return
+        
+        # 获取当前人格
+        current_persona = get_current_persona(character_name)
+        
+        message = f"🎭 {character_name} 的可用人格:\n\n"
+        for persona_name, persona_data in character_personas.items():
+            status_icon = "✅" if persona_name == current_persona else "◯"
+            message += f"{status_icon} **{persona_name}**\n"
+            message += f"   {persona_data['description']}\n"
+            message += f"   ❤️ 生命: {persona_data['health']} | ⚔️ 攻击: {persona_data['attack']} | 🛡️ 防御: {persona_data['defense']}\n"
+            if persona_data.get('physical_resistance', 0) > 0 or persona_data.get('magic_resistance', 0) > 0:
+                message += f"   🛡️ 物抗: {persona_data.get('physical_resistance', 0)*100:.0f}% | 🔮 魔抗: {persona_data.get('magic_resistance', 0)*100:.0f}%\n"
+            message += "\n"
+        
+        message += f"📖 使用 /switch {character_name} <人格名> 来切换人格"
+        
+        await update.message.reply_text(message)
+
+async def switch_character_persona(update: Update, context: CallbackContext) -> None:
+    """切换角色人格"""
+    args = context.args
+    
+    if len(args) < 2:
+        await update.message.reply_text("请提供角色名和人格名。\n用法: /switch <角色名> <人格名>\n\n支持的角色: 珏、露、莹、笙、曦")
+        return
+    
+    character_name = args[0]
+    persona_name = args[1]
+    
+    success, message = switch_persona(character_name, persona_name)
+    await update.message.reply_text(message)
+
+async def create_core_character(update: Update, context: CallbackContext) -> None:
+    """创建核心角色"""
+    args = context.args
+    
+    if not args:
+        await update.message.reply_text("请提供角色名。\n用法: /create_core <角色名>\n\n支持的角色: 珏、露、莹、笙、曦")
+        return
+    
+    character_name = args[0]
+    success, message = create_core_character_if_not_exists(character_name)
+    await update.message.reply_text(message)
+
+async def show_core_panel(update: Update, context: CallbackContext) -> None:
+    """显示五大核心角色的面板"""
+    from character.status_formatter import format_character_status
+    from database.queries import get_characters_by_type
+    
+    core_characters = ["珏", "露", "莹", "笙", "曦"]
+    message = "🎭 核心角色面板\n\n"
+    
+    for character_name in core_characters:
+        # 首先尝试用原始名称查找
+        character = get_character_by_name(character_name)
+        if not character:
+            # 尝试查找数据库中所有友方角色，找到名称包含该角色名的
+            all_friendly = get_characters_by_type("friendly")
+            for char in all_friendly:
+                # 检查角色名是否以目标角色名开头（如"珏(战士)"以"珏"开头）
+                if char['name'].startswith(character_name + "("):
+                    character = char
+                    break
+        
+        if character:
+            # 获取当前人格
+            current_persona = get_current_persona(character_name)
+            persona_info = get_persona_info(character_name, current_persona) if current_persona else None
+            
+            message += f"👤 **{character['name']}**"
+            if current_persona:
+                message += f" ({current_persona})"
+            message += "\n"
+            
+            # 基础属性
+            message += f"❤️ 生命: {character['health']}/{character['max_health']} | "
+            message += f"⚔️ 攻击: {character['attack']} | "
+            message += f"🛡️ 防御: {character['defense']}\n"
+            
+            # 抗性
+            phys_res = character.get('physical_resistance', 0)
+            magic_res = character.get('magic_resistance', 0)
+            if phys_res > 0 or magic_res > 0:
+                message += f"🛡️ 物抗: {phys_res*100:.0f}% | 🔮 魔抗: {magic_res*100:.0f}%\n"
+            
+            # 种族标签
+            race_tags = character.get('race_tags', '[]')
+            if isinstance(race_tags, str):
+                import json
+                try:
+                    race_tags = json.loads(race_tags)
+                except:
+                    race_tags = []
+            if race_tags:
+                message += f"🏷️ 种族: {', '.join(race_tags)}\n"
+            
+            # 战斗状态
+            battle_status = "⚔️ 战斗中" if character.get('in_battle', 0) else "🏠 待命"
+            message += f"📍 状态: {battle_status}\n"
+            
+            # 人格描述
+            if persona_info:
+                message += f"📝 {persona_info['description']}\n"
+            
+            message += "\n"
+        else:
+            message += f"👤 **{character_name}** - 未创建\n"
+            message += f"📝 使用 /create_core {character_name} 创建角色\n\n"
+    
+    message += "📖 使用说明:\n"
+    message += "• /show <角色名> - 查看详细信息\n"
+    message += "• /personas <角色名> - 查看可切换人格\n"
+    message += "• /switch <角色名> <人格名> - 切换人格"
+    
+    await update.message.reply_text(message)
+
 async def show_help(update: Update, context: CallbackContext) -> None:
     """显示所有可用命令的帮助信息"""
     help_text = "🤖 SimpleBot 命令列表:\n\n"
@@ -498,6 +652,13 @@ async def show_help(update: Update, context: CallbackContext) -> None:
     help_text += "🎯 技能管理命令:\n"
     help_text += "/sm <角色名称> - 管理角色技能（支持批量添加/移除）\n"
     help_text += "/skills <角色名称> - 查看角色技能\n\n"
+    
+    help_text += "🎭 人格系统命令:\n"
+    help_text += "/personas - 查看可用人格\n"
+    help_text += "/personas <角色名> - 查看指定角色的人格\n"
+    help_text += "/switch <角色名> <人格名> - 切换角色人格\n"
+    help_text += "/create_core <角色名> - 创建核心角色\n"
+    help_text += "/panel - 查看五大核心角色面板\n\n"
     
     help_text += "ℹ️ 其他命令:\n"
     help_text += "/help - 显示此帮助信息\n"
@@ -545,6 +706,11 @@ def get_character_management_handlers():
         CommandHandler("battle", show_battle_status),
         CommandHandler(["battle_join", "join"], battle_join),
         CommandHandler(["battle_leave", "leave"], battle_leave),
+        # Persona 系统命令
+        CommandHandler("personas", show_personas),
+        CommandHandler("switch", switch_character_persona),
+        CommandHandler("create_core", create_core_character),
+        CommandHandler("panel", show_core_panel),
         CommandHandler("help", show_help),
     ]
     

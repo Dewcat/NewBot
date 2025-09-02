@@ -193,29 +193,53 @@ def process_end_turn_effects(character_id: int) -> List[str]:
     if not character:
         return messages
     
+    # 记录初始生命值
+    initial_health = character['health']
+    character_knocked_down = False
+    
     for effect in effects:
-        message = process_single_effect_end_turn(character, effect)
+        # 如果角色已经倒下，跳过剩余效果处理
+        if character_knocked_down:
+            break
+            
+        # 获取最新的角色数据
+        current_character = get_character(character_id)
+        if not current_character:
+            break
+            
+        message = process_single_effect_end_turn(current_character, effect)
         if message:
             messages.append(message)
-        
-        # 减少持续时间（除了特殊效果）
-        if effect.effect_name not in ['rupture', 'bleeding', 'shield', 'cooldown_reduction']:
-            new_duration = effect.duration - 1
-            if new_duration <= 0:
-                # 状态效果即将结束，添加通知（除了加速效果，加速效果不在回合结束时播报）
-                if effect.effect_name != 'haste':
-                    effect_display_names = {
-                        'strong': '强壮',
-                        'breathing': '呼吸法', 
-                        'guard': '守护',
-                        'burn': '烧伤',
-                        'poison': '中毒',
-                        'weak': '虚弱',
-                        'vulnerable': '易伤'
-                    }
-                    effect_display_name = effect_display_names.get(effect.effect_name, effect.effect_name)
-                    messages.append(f"⏰ {character['name']} 的 {effect_display_name} 状态结束")
-            update_status_effect_duration(character_id, effect.effect_name, new_duration)
+            
+            # 每次处理效果后检查角色是否倒下
+            updated_character = get_character(character_id)
+            if updated_character and updated_character['health'] <= 0 and initial_health > 0:
+                # 角色刚刚倒下，只保留倒下信息
+                character_knocked_down = True
+                messages = [f"💀 {character['name']} 倒下了！"]
+                break
+    
+    # 如果角色没有倒下，处理状态效果持续时间
+    if not character_knocked_down:
+        for effect in effects:
+            # 减少持续时间（除了特殊效果）
+            if effect.effect_name not in ['rupture', 'bleeding', 'shield', 'cooldown_reduction']:
+                new_duration = effect.duration - 1
+                if new_duration <= 0:
+                    # 状态效果即将结束，添加通知（除了加速效果，加速效果不在回合结束时播报）
+                    if effect.effect_name != 'haste':
+                        effect_display_names = {
+                            'strong': '强壮',
+                            'breathing': '呼吸法', 
+                            'guard': '守护',
+                            'burn': '烧伤',
+                            'poison': '中毒',
+                            'weak': '虚弱',
+                            'vulnerable': '易伤'
+                        }
+                        effect_display_name = effect_display_names.get(effect.effect_name, effect.effect_name)
+                        messages.append(f"⏰ {character['name']} 的 {effect_display_name} 状态结束")
+                update_status_effect_duration(character_id, effect.effect_name, new_duration)
     
     return messages
 
@@ -261,8 +285,9 @@ def process_single_effect_end_turn(character: Dict, effect: StatusEffect) -> Opt
         return f"🔥 {character_name} 受到烧伤伤害 {damage} 点"
     
     elif effect.effect_name == 'poison':
-        # 中毒：按强度*1%体力扣血
-        damage = int(character['max_health'] * effect.intensity / 100)
+        # 中毒：按强度*1%当前生命值扣血
+        damage = int(character['health'] * effect.intensity / 100)
+        damage = max(1, damage)  # 至少造成1点伤害
         new_health = max(0, character['health'] - damage)
         update_character_health(character_id, new_health)
         return f"☠️ {character_name} 受到中毒伤害 {damage} 点"
@@ -300,7 +325,8 @@ def process_hit_effects(character_id: int, incoming_damage: int) -> Tuple[int, L
             reduced_damage = int(final_damage * damage_reduction)
             final_damage = max(0, final_damage - reduced_damage)
             if reduced_damage > 0:
-                messages.append(f"🛡️ {character_name} 的守护减免了 {reduced_damage} 点伤害")
+                percent = int(effect.intensity * 10)
+                messages.append(f"守护减伤: -{percent}%")
         
         elif effect.effect_name == 'vulnerable':
             # 易伤：受到最终伤害+(强度*10%)
@@ -308,7 +334,8 @@ def process_hit_effects(character_id: int, incoming_damage: int) -> Tuple[int, L
             increased_damage = int(final_damage * damage_increase)
             final_damage += increased_damage
             if increased_damage > 0:
-                messages.append(f"💔 {character_name} 的易伤增加了 {increased_damage} 点伤害")
+                percent = int(effect.intensity * 10)
+                messages.append(f"易伤增伤: +{percent}%")
         
         elif effect.effect_name == 'shield':
             # 护盾：受到最终伤害-护盾强度，伤害结算后护盾强度会减少
@@ -424,14 +451,16 @@ def calculate_damage_modifiers(character_id: int, base_damage: int, is_crit: boo
             damage_bonus = int(final_damage * effect.intensity * 0.1)
             final_damage += damage_bonus
             if damage_bonus > 0:
-                messages.append(f"💪 {character_name} 的强壮增加了 {damage_bonus} 点伤害")
+                percent = int(effect.intensity * 10)
+                messages.append(f"强壮增伤: +{percent}%")
         
         elif effect.effect_name == 'weak':
             # 虚弱：攻击技能最终伤害-(强度*10%)
             damage_reduction = int(final_damage * effect.intensity * 0.1)
             final_damage = max(0, final_damage - damage_reduction)
             if damage_reduction > 0:
-                messages.append(f"😵 {character_name} 的虚弱减少了 {damage_reduction} 点伤害")
+                percent = int(effect.intensity * 10)
+                messages.append(f"虚弱减伤: -{percent}%")
     
     return final_damage, final_crit, messages
 

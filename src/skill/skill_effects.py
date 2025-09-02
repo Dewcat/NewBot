@@ -12,8 +12,10 @@ from game.damage_calculator import (
     calculate_damage_from_formula, 
     calculate_attack_defense_modifier,
     calculate_advanced_damage,
-    update_character_cooldowns
+    update_character_cooldowns,
+    apply_damage_with_stagger
 )
+from skill.effect_target_resolver import target_resolver
 
 class SkillEffect(ABC):
     """技能效果的抽象基类"""
@@ -45,7 +47,15 @@ class SkillEffect(ABC):
             return self.execute_debuff(attacker, target, skill_info)
         elif skill_category == 'self':
             return self.execute_self(attacker, target, skill_info)
-        elif skill_category == 'aoe':
+        elif skill_category == 'aoe_damage':
+            return self.execute_aoe_damage(attacker, target, skill_info)
+        elif skill_category == 'aoe_healing':
+            return self.execute_aoe_healing(attacker, target, skill_info)
+        elif skill_category == 'aoe_buff':
+            return self.execute_aoe_buff(attacker, target, skill_info)
+        elif skill_category == 'aoe_debuff':
+            return self.execute_aoe_debuff(attacker, target, skill_info)
+        elif skill_category == 'aoe':  # 兼容旧的aoe分类
             return self.execute_aoe(attacker, target, skill_info)
         else:  # damage 或其他默认为伤害
             return self.execute_damage(attacker, target, skill_info)
@@ -67,8 +77,11 @@ class SkillEffect(ABC):
         update_character_health(target['id'], new_health)
         record_battle(attacker['id'], target['id'], final_damage, skill_info['id'] if skill_info else None)
         
-        # 处理技能的额外状态效果
-        status_messages = self.apply_skill_status_effects(attacker, target, skill_info)
+        # 处理混乱值扣除
+        stagger_messages = apply_damage_with_stagger(target['id'], final_damage)
+        
+        # 处理技能的额外状态效果（传递最终伤害作为主效果值）
+        status_messages = self.apply_skill_status_effects(attacker, target, skill_info, final_damage)
         
         # 处理攻击者的行动后效果
         action_messages = process_action_effects(attacker['id'])
@@ -113,6 +126,7 @@ class SkillEffect(ABC):
         if attacker_messages and not any("呼吸法触发暴击" in msg for msg in attacker_messages):
             detail_messages.extend(attacker_messages)
         detail_messages.extend(target_messages)
+        detail_messages.extend(stagger_messages)  # 添加混乱值信息
         detail_messages.extend(status_messages)
         detail_messages.extend(action_messages)
         
@@ -144,8 +158,8 @@ class SkillEffect(ABC):
         update_character_health(heal_target['id'], new_health)
         record_battle(attacker['id'], heal_target['id'], -actual_heal, skill_info['id'] if skill_info else 1)
         
-        # 处理技能的额外状态效果
-        status_messages = self.apply_skill_status_effects(attacker, heal_target, skill_info)
+        # 处理技能的额外状态效果（传递实际治疗量作为主效果值）
+        status_messages = self.apply_skill_status_effects(attacker, heal_target, skill_info, actual_heal)
         
         # 处理行动后效果
         action_messages = process_action_effects(attacker['id'])
@@ -153,7 +167,7 @@ class SkillEffect(ABC):
         # 更新冷却时间
         update_character_cooldowns(attacker['id'], skill_info['id'] if skill_info else 1)
         
-        result_text = f"💚 魔法治疗：{heal_amount} 点 → 恢复了 {actual_heal} 点生命值"
+        result_text = f"💚 治疗：{heal_amount} 点 → 恢复了 {actual_heal} 点生命值"
         if actual_heal < heal_amount:
             result_text += f"（生命值已满，实际恢复{actual_heal}点）"
         
@@ -237,8 +251,8 @@ class SkillEffect(ABC):
     def execute_buff(self, attacker, target, skill_info):
         """执行纯增益技能 - 不造成伤害，只施加buff效果"""
         
-        # 处理技能的状态效果 - buff技能可以指定目标
-        status_messages = self.apply_skill_status_effects(attacker, target, skill_info)
+        # 处理技能的状态效果 - buff技能可以指定目标（主效果值为0）
+        status_messages = self.apply_skill_status_effects(attacker, target, skill_info, 0)
         
         # 处理行动后效果
         action_messages = process_action_effects(attacker['id'])
@@ -269,8 +283,8 @@ class SkillEffect(ABC):
     def execute_debuff(self, attacker, target, skill_info):
         """执行纯减益技能 - 不造成伤害，只施加debuff效果"""
         
-        # 处理技能的状态效果 - debuff技能可以指定目标
-        status_messages = self.apply_skill_status_effects(attacker, target, skill_info)
+        # 处理技能的状态效果 - debuff技能可以指定目标（主效果值为0）
+        status_messages = self.apply_skill_status_effects(attacker, target, skill_info, 0)
         
         # 处理行动后效果
         action_messages = process_action_effects(attacker['id'])
@@ -304,8 +318,8 @@ class SkillEffect(ABC):
         # 自我技能的目标始终是施法者自己
         self_target = attacker
         
-        # 处理技能的状态效果 - 自我技能只对施法者生效
-        status_messages = self.apply_skill_status_effects(attacker, self_target, skill_info)
+        # 处理技能的状态效果 - 自我技能只对施法者生效（主效果值为0）
+        status_messages = self.apply_skill_status_effects(attacker, self_target, skill_info, 0)
         
         # 处理行动后效果
         action_messages = process_action_effects(attacker['id'])
@@ -483,8 +497,199 @@ class SkillEffect(ABC):
         
         return messages
     
-    def apply_skill_status_effects(self, attacker, target, skill_info):
-        """应用技能的状态效果"""
+    def execute_aoe_damage(self, attacker, target, skill_info):
+        """执行AOE伤害技能"""
+        from database.queries import get_characters_by_type
+        
+        # AOE伤害技能目标是所有敌方角色
+        attacker_type = attacker.get('character_type', 'friendly')
+        enemy_type = 'enemy' if attacker_type == 'friendly' else 'friendly'
+        targets = get_characters_by_type(enemy_type, in_battle=True)
+        
+        if not targets:
+            return {
+                'total_damage': 0,
+                'result_text': f"🌀 {skill_info.get('name', 'AOE攻击')}：没有找到敌方目标",
+                'target_health': 0
+            }
+        
+        # 对每个目标执行伤害
+        total_damage = 0
+        damage_messages = []
+        
+        for enemy_target in targets:
+            damage_result = self.execute_damage_without_self_effects(attacker, enemy_target, skill_info)
+            total_damage += damage_result['total_damage']
+            damage_messages.append(f"→ {enemy_target['name']}: 受到 {damage_result['total_damage']} 点伤害")
+        
+        # 处理技能的次要效果（传递总伤害作为主效果值）
+        status_messages = self.apply_skill_status_effects(attacker, None, skill_info, total_damage)
+        
+        # 处理行动后效果
+        action_messages = process_action_effects(attacker['id'])
+        
+        # 处理自我效果
+        self_effect_messages = self.apply_self_effects(attacker, skill_info, total_damage, 'aoe_damage')
+        
+        # 更新冷却时间
+        update_character_cooldowns(attacker['id'], skill_info['id'] if skill_info else 1)
+        
+        # 构建结果文本
+        skill_name = skill_info.get('name', 'AOE攻击')
+        result_text = f"⚔️ 对 {len(targets)} 个敌方目标造成总计 {total_damage} 点伤害\n"
+        result_text += "\n".join(damage_messages)
+        
+        # 添加次要效果
+        all_secondary_messages = status_messages + self_effect_messages + action_messages
+        if all_secondary_messages:
+            result_text += "\n" + "\n".join(all_secondary_messages)
+        
+        return {
+            'total_damage': total_damage,
+            'result_text': result_text,
+            'target_health': 0
+        }
+    
+    def execute_aoe_healing(self, attacker, target, skill_info):
+        """执行AOE治疗技能"""
+        from database.queries import get_characters_by_type
+        
+        # AOE治疗技能目标是所有友方角色
+        attacker_type = attacker.get('character_type', 'friendly')
+        targets = get_characters_by_type(attacker_type, in_battle=True)
+        
+        if not targets:
+            return {
+                'total_damage': 0,
+                'result_text': f"🌀 {skill_info.get('name', 'AOE治疗')}：没有找到友方目标",
+                'target_health': 0
+            }
+        
+        # 对每个目标执行治疗
+        total_healing = 0
+        healing_messages = []
+        
+        for ally_target in targets:
+            healing_result = self.execute_healing_without_self_effects(attacker, ally_target, skill_info)
+            heal_amount = abs(healing_result['total_damage'])  # 治疗返回负伤害
+            total_healing += heal_amount
+            healing_messages.append(f"→ {ally_target['name']}: 恢复 {heal_amount} 点生命值")
+        
+        # 处理技能的次要效果（传递总治疗量作为主效果值）
+        status_messages = self.apply_skill_status_effects(attacker, None, skill_info, total_healing)
+        
+        # 处理行动后效果
+        action_messages = process_action_effects(attacker['id'])
+        
+        # 处理自我效果
+        self_effect_messages = self.apply_self_effects(attacker, skill_info, total_healing, 'aoe_healing')
+        
+        # 更新冷却时间
+        update_character_cooldowns(attacker['id'], skill_info['id'] if skill_info else 1)
+        
+        # 构建结果文本
+        skill_name = skill_info.get('name', 'AOE治疗')
+        result_text = f"💚 对 {len(targets)} 个友方目标总计恢复 {total_healing} 点生命值\n"
+        result_text += "\n".join(healing_messages)
+        
+        # 添加次要效果
+        all_secondary_messages = status_messages + self_effect_messages + action_messages
+        if all_secondary_messages:
+            result_text += "\n" + "\n".join(all_secondary_messages)
+        
+        return {
+            'total_damage': -total_healing,  # 治疗返回负伤害
+            'result_text': result_text,
+            'target_health': 0
+        }
+    
+    def execute_aoe_buff(self, attacker, target, skill_info):
+        """执行AOE增益技能"""
+        from database.queries import get_characters_by_type
+        
+        # AOE增益技能目标是所有友方角色
+        attacker_type = attacker.get('character_type', 'friendly')
+        targets = get_characters_by_type(attacker_type, in_battle=True)
+        
+        if not targets:
+            return {
+                'total_damage': 0,
+                'result_text': f"🌀 {skill_info.get('name', 'AOE增益')}：没有找到友方目标",
+                'target_health': 0
+            }
+        
+        # 处理技能的主要效果和次要效果（AOE增益技能主效果值为0）
+        status_messages = self.apply_skill_status_effects(attacker, None, skill_info, 0)
+        
+        # 处理行动后效果
+        action_messages = process_action_effects(attacker['id'])
+        
+        # 处理自我效果
+        self_effect_messages = self.apply_self_effects(attacker, skill_info, 0, 'aoe_buff')
+        
+        # 更新冷却时间
+        update_character_cooldowns(attacker['id'], skill_info['id'] if skill_info else 1)
+        
+        # 构建结果文本
+        skill_name = skill_info.get('name', 'AOE增益')
+        result_text = f"✨ 对 {len(targets)} 个友方目标施加增益效果"
+        
+        # 添加所有效果
+        all_messages = status_messages + self_effect_messages + action_messages
+        if all_messages:
+            result_text += "\n" + "\n".join(all_messages)
+        
+        return {
+            'total_damage': 0,
+            'result_text': result_text,
+            'target_health': 0
+        }
+    
+    def execute_aoe_debuff(self, attacker, target, skill_info):
+        """执行AOE减益技能"""
+        from database.queries import get_characters_by_type
+        
+        # AOE减益技能目标是所有敌方角色
+        attacker_type = attacker.get('character_type', 'friendly')
+        enemy_type = 'enemy' if attacker_type == 'friendly' else 'friendly'
+        targets = get_characters_by_type(enemy_type, in_battle=True)
+        
+        if not targets:
+            return {
+                'total_damage': 0,
+                'result_text': f"🌀 {skill_info.get('name', 'AOE减益')}：没有找到敌方目标",
+                'target_health': 0
+            }
+        
+        # 处理技能的主要效果和次要效果（AOE减益技能主效果值为0）
+        status_messages = self.apply_skill_status_effects(attacker, None, skill_info, 0)
+        
+        # 处理行动后效果
+        action_messages = process_action_effects(attacker['id'])
+        
+        # 处理自我效果
+        self_effect_messages = self.apply_self_effects(attacker, skill_info, 0, 'aoe_debuff')
+        
+        # 更新冷却时间
+        update_character_cooldowns(attacker['id'], skill_info['id'] if skill_info else 1)
+        
+        # 构建结果文本
+        skill_name = skill_info.get('name', 'AOE减益')
+        result_text = f"💀 对 {len(targets)} 个敌方目标施加减益效果"
+        
+        # 添加所有效果
+        all_messages = status_messages + self_effect_messages + action_messages
+        if all_messages:
+            result_text += "\n" + "\n".join(all_messages)
+        
+        return {
+            'total_damage': 0,
+            'result_text': result_text,
+            'target_health': 0
+        }
+    
+    def apply_skill_status_effects(self, attacker, target, skill_info, main_effect_value=0):
+        """应用技能的状态效果（使用新的目标解析系统，支持百分比计算）"""
         messages = []
         
         if not skill_info:
@@ -495,161 +700,160 @@ class SkillEffect(ABC):
         except (json.JSONDecodeError, TypeError):
             effects = {}
         
-        # 获取技能分类
-        skill_category = skill_info.get('skill_category', 'damage')
-        
-        # 处理四种状态效果类型
-        
-        # 1. 处理self_buff效果 - 始终施加给施法者自己
-        if 'self_buff' in effects:
-            buff_info = effects['self_buff']
-            
-            # 特殊处理冷却缩减 - 立即生效而不是作为状态效果
-            if buff_info['type'] == 'cooldown_reduction':
-                messages.extend(self._apply_instant_cooldown_reduction(attacker['id'], buff_info['intensity']))
-            # 特殊处理加速 - 立即生效当前回合并添加为状态效果
-            elif buff_info['type'] == 'haste':
-                success = add_status_effect(
-                    attacker['id'],
-                    'buff',
-                    buff_info['type'],
-                    buff_info['intensity'],
-                    buff_info['duration']
-                )
-                if success:
-                    # 立即应用加速效果到当前回合
-                    current_char = get_character(attacker['id'])
-                    if current_char:
-                        from database.queries import update_character_actions
-                        current_actions = current_char.get('current_actions', 0)
-                        new_actions = current_actions + buff_info['intensity']
-                        if update_character_actions(attacker['id'], new_actions):
-                            messages.append(f"✨ {attacker['name']} 获得了 加速 效果")
-                            messages.append(f"⚡ {attacker['name']} 的加速立即增加了 {buff_info['intensity']} 次行动次数")
-            else:
-                success = add_status_effect(
-                    attacker['id'],
-                    'buff',
-                    buff_info['type'],
-                    buff_info['intensity'],
-                    buff_info['duration']
-                )
-                if success:
-                    buff_names = {
-                        'strong': '强壮',
-                        'breathing': '呼吸法',
-                        'guard': '守护',
-                        'shield': '护盾'
-                    }
-                    buff_name = buff_names.get(buff_info['type'], buff_info['type'])
-                    
-                    if buff_info['type'] == 'shield':
-                        # 护盾只显示盾值
-                        messages.append(f"✨ {attacker['name']} 获得了 {buff_info['intensity']} 点{buff_name}")
-                    else:
-                        # 其他buff显示强度和持续时间
-                        messages.append(f"✨ {attacker['name']} 获得了 {buff_name}({buff_info['intensity']}) 效果，持续 {buff_info['duration']} 回合")
-        
-        # 2. 处理self_debuff效果 - 始终施加给施法者自己
-        if 'self_debuff' in effects:
-            debuff_info = effects['self_debuff']
-            success = add_status_effect(
-                attacker['id'],
-                'debuff',
-                debuff_info['type'],
-                debuff_info['intensity'],
-                debuff_info['duration']
-            )
-            if success:
-                debuff_names = {
-                    'burn': '烧伤',
-                    'poison': '中毒',
-                    'rupture': '破裂',
-                    'bleeding': '流血',
-                    'weak': '虚弱',
-                    'vulnerable': '易伤'
-                }
-                debuff_name = debuff_names.get(debuff_info['type'], debuff_info['type'])
-                messages.append(f"💀 {attacker['name']} 受到了 {debuff_name}({debuff_info['intensity']}) 效果，持续 {debuff_info['duration']} 回合")
-        
-        # 3. 处理buff效果 - 始终施加给目标
+        # 处理buff效果
         if 'buff' in effects:
             buff_info = effects['buff']
-            buff_target_id = target['id'] if target else attacker['id']
-            buff_target_name = target['name'] if target else attacker['name']
+            # 解析目标
+            target_type = buff_info.get('target', 'skill_target')
+            buff_targets = target_resolver.resolve_target(target_type, attacker, target)
             
-            # 特殊处理冷却缩减 - 立即生效而不是作为状态效果
-            if buff_info['type'] == 'cooldown_reduction':
-                messages.extend(self._apply_instant_cooldown_reduction(buff_target_id, buff_info['intensity']))
-            # 特殊处理加速 - 立即生效当前回合并添加为状态效果
-            elif buff_info['type'] == 'haste':
-                success = add_status_effect(
-                    buff_target_id,
-                    'buff',
-                    buff_info['type'],
-                    buff_info['intensity'],
-                    buff_info['duration']
-                )
-                if success:
-                    # 立即应用加速效果到当前回合
-                    current_char = get_character(buff_target_id)
-                    if current_char:
-                        from database.queries import update_character_actions
-                        current_actions = current_char.get('current_actions', 0)
-                        new_actions = current_actions + buff_info['intensity']
-                        if update_character_actions(buff_target_id, new_actions):
-                            messages.append(f"✨ {buff_target_name} 获得了 加速 效果")
-                            messages.append(f"⚡ {buff_target_name} 的加速立即增加了 {buff_info['intensity']} 次行动次数")
-            else:
-                success = add_status_effect(
-                    buff_target_id,
-                    'buff',
-                    buff_info['type'],
-                    buff_info['intensity'],
-                    buff_info['duration']
-                )
-                if success:
-                    buff_names = {
-                        'strong': '强壮',
-                        'breathing': '呼吸法',
-                        'guard': '守护',
-                        'shield': '护盾'
-                    }
-                    buff_name = buff_names.get(buff_info['type'], buff_info['type'])
+            # 应用buff效果
+            for buff_target in buff_targets:
+                if not buff_target:
+                    continue
                     
-                    if buff_info['type'] == 'shield':
-                        # 护盾只显示盾值
-                        messages.append(f"✨ {buff_target_name} 获得了 {buff_info['intensity']} 点{buff_name}")
-                    else:
-                        # 其他buff显示强度和持续时间
-                        messages.append(f"✨ {buff_target_name} 获得了 {buff_name}({buff_info['intensity']}) 效果，持续 {buff_info['duration']} 回合")
+                # 特殊处理冷却缩减 - 立即生效而不是作为状态效果
+                if buff_info['type'] == 'cooldown_reduction':
+                    messages.extend(self._apply_instant_cooldown_reduction(buff_target['id'], buff_info['intensity']))
+                # 特殊处理加速 - 立即生效当前回合并添加为状态效果
+                elif buff_info['type'] == 'haste':
+                    success = add_status_effect(
+                        buff_target['id'],
+                        'buff',
+                        buff_info['type'],
+                        buff_info['intensity'],
+                        buff_info['duration']
+                    )
+                    if success:
+                        # 立即应用加速效果到当前回合
+                        current_char = get_character(buff_target['id'])
+                        if current_char:
+                            from database.queries import update_character_actions
+                            current_actions = current_char.get('current_actions', 0)
+                            new_actions = current_actions + buff_info['intensity']
+                            if update_character_actions(buff_target['id'], new_actions):
+                                messages.append(f"✨ {buff_target['name']} 获得了 加速 效果")
+                                messages.append(f"⚡ {buff_target['name']} 的加速立即增加了 {buff_info['intensity']} 次行动次数")
+                else:
+                    success = add_status_effect(
+                        buff_target['id'],
+                        'buff',
+                        buff_info['type'],
+                        buff_info['intensity'],
+                        buff_info['duration']
+                    )
+                    if success:
+                        buff_names = {
+                            'strong': '强壮',
+                            'breathing': '呼吸法',
+                            'guard': '守护',
+                            'shield': '护盾'
+                        }
+                        buff_name = buff_names.get(buff_info['type'], buff_info['type'])
+                        
+                        if buff_info['type'] == 'shield':
+                            # 护盾只显示盾值
+                            messages.append(f"✨ {buff_target['name']} 获得了 {buff_info['intensity']} 点{buff_name}")
+                        else:
+                            # 其他buff显示强度和持续时间
+                            messages.append(f"✨ {buff_target['name']} 获得了 {buff_name}({buff_info['intensity']}) 效果，持续 {buff_info['duration']} 回合")
         
-        # 4. 处理debuff效果 - 始终施加给目标
+        # 处理debuff效果
         if 'debuff' in effects:
             debuff_info = effects['debuff']
-            debuff_target_id = target['id'] if target else attacker['id']
-            debuff_target_name = target['name'] if target else attacker['name']
+            # 解析目标
+            target_type = debuff_info.get('target', 'skill_target')
+            debuff_targets = target_resolver.resolve_target(target_type, attacker, target)
             
-            success = add_status_effect(
-                debuff_target_id,
-                'debuff',
-                debuff_info['type'],
-                debuff_info['intensity'],
-                debuff_info['duration']
-            )
-            if success:
-                debuff_names = {
-                    'burn': '烧伤',
-                    'poison': '中毒',
-                    'rupture': '破裂',
-                    'bleeding': '流血',
-                    'weak': '虚弱',
-                    'vulnerable': '易伤'
-                }
-                debuff_name = debuff_names.get(debuff_info['type'], debuff_info['type'])
-                messages.append(f"💀 {debuff_target_name} 受到了 {debuff_name}({debuff_info['intensity']}) 效果，持续 {debuff_info['duration']} 回合")
+            # 应用debuff效果
+            for debuff_target in debuff_targets:
+                if not debuff_target:
+                    continue
+                    
+                success = add_status_effect(
+                    debuff_target['id'],
+                    'debuff',
+                    debuff_info['type'],
+                    debuff_info['intensity'],
+                    debuff_info['duration']
+                )
+                if success:
+                    debuff_names = {
+                        'burn': '烧伤',
+                        'poison': '中毒',
+                        'rupture': '破裂',
+                        'bleeding': '流血',
+                        'weak': '虚弱',
+                        'vulnerable': '易伤'
+                    }
+                    debuff_name = debuff_names.get(debuff_info['type'], debuff_info['type'])
+                    messages.append(f"💀 {debuff_target['name']} 受到了 {debuff_name}({debuff_info['intensity']}) 效果，持续 {debuff_info['duration']} 回合")
+        
+        # 处理damage效果（对目标造成伤害）
+        if 'damage' in effects:
+            damage_info = effects['damage']
+            # 解析目标
+            target_type = damage_info.get('target', 'skill_target')
+            damage_targets = target_resolver.resolve_target(target_type, attacker, target)
+            
+            # 应用伤害效果
+            for damage_target in damage_targets:
+                if not damage_target:
+                    continue
+                    
+                # 计算伤害量（支持百分比）
+                damage_amount = self._calculate_effect_amount(damage_info, main_effect_value, 'damage')
+                if damage_amount > 0:
+                    new_health = max(0, damage_target['health'] - damage_amount)
+                    update_character_health(damage_target['id'], new_health)
+                    messages.append(f"⚔️ {damage_target['name']} 受到了 {damage_amount} 点额外伤害")
+        
+        # 处理heal效果（对目标进行治疗）
+        if 'heal' in effects:
+            heal_info = effects['heal']
+            # 解析目标
+            target_type = heal_info.get('target', 'skill_target')
+            heal_targets = target_resolver.resolve_target(target_type, attacker, target)
+            
+            # 应用治疗效果
+            for heal_target in heal_targets:
+                if not heal_target:
+                    continue
+                    
+                # 计算治疗量（支持百分比）
+                heal_amount = self._calculate_effect_amount(heal_info, main_effect_value, 'heal')
+                if heal_amount > 0:
+                    new_health = min(heal_target['max_health'], heal_target['health'] + heal_amount)
+                    actual_heal = new_health - heal_target['health']
+                    if actual_heal > 0:
+                        update_character_health(heal_target['id'], new_health)
+                        messages.append(f"💚 {heal_target['name']} 恢复了 {actual_heal} 点生命值")
         
         return messages
+    
+    def _calculate_effect_amount(self, effect_config, main_effect_value, effect_type):
+        """
+        计算效果数值（支持百分比）
+        
+        Args:
+            effect_config: 效果配置
+            main_effect_value: 主效果数值（伤害或治疗量）
+            effect_type: 效果类型
+            
+        Returns:
+            int: 计算后的效果数值
+        """
+        if isinstance(effect_config, dict):
+            # 固定数值
+            if 'amount' in effect_config:
+                return effect_config['amount']
+            
+            # 百分比计算（基于主效果）
+            if 'percentage' in effect_config:
+                percentage = effect_config['percentage']
+                return int(main_effect_value * percentage / 100)
+        
+        return 0
     
     def _apply_instant_cooldown_reduction(self, character_id: int, intensity: int) -> list:
         """立即应用冷却缩减效果"""
