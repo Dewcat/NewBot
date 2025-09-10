@@ -162,6 +162,13 @@ async def show_target_selection(update: Update, context: CallbackContext, skill_
     attacker_id = context.user_data['attacker_id']
     attacker = get_character(attacker_id)
     
+    # 检查技能的情感等级要求
+    from character.emotion_system import check_skill_emotion_requirement
+    can_use, error_msg = check_skill_emotion_requirement(attacker_id, skill_info)
+    if not can_use:
+        await query.edit_message_text(f"技能使用失败：{error_msg}")
+        return ConversationHandler.END
+    
     # 确定技能类型和目标选择 - 统一使用 skill_category
     is_heal_skill = False
     is_buff_skill = False

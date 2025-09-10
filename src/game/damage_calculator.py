@@ -45,7 +45,12 @@ def parse_dice_formula(formula):
     return base_value, dice_rolls
 
 def roll_dice(num_dice, faces):
-    """投掷指定数量和面数的骰子"""
+    """投掷指定数量和面数的骰子，返回总和和详细结果"""
+    results = [random.randint(1, faces) for _ in range(num_dice)]
+    return sum(results), results
+
+def roll_dice_simple(num_dice, faces):
+    """投掷指定数量和面数的骰子，只返回总和（向后兼容）"""
     return sum(random.randint(1, faces) for _ in range(num_dice))
 
 def calculate_race_bonus(special_damage_tags, target_race_tags):
@@ -99,7 +104,7 @@ def calculate_advanced_damage(skill, attacker, target):
         tuple: (final_damage, damage_details)
     """
     # 1. 基础伤害计算
-    base_damage, dice_detail = calculate_damage_from_formula(skill.get('damage_formula', '1d6'))
+    base_damage, dice_detail, dice_results_info = calculate_damage_from_formula(skill.get('damage_formula', '1d6'))
     
     # 2. 攻防修正
     attack_defense_modifier = calculate_attack_defense_modifier(
@@ -172,7 +177,7 @@ def calculate_advanced_damage(skill, attacker, target):
     
     # 不再显示原始伤害
     
-    return final_damage, " → ".join(damage_details)
+    return final_damage, " → ".join(damage_details), dice_results_info
 
 def apply_damage_with_stagger(target_id: int, damage: int) -> List[str]:
     """
@@ -206,23 +211,32 @@ def calculate_damage_from_formula(formula):
         formula (str): 骰子公式，如 "5+2d3"
         
     Returns:
-        tuple: (total_damage, detail_text)
+        tuple: (total_damage, detail_text, dice_results_info)
     """
     base_value, dice_rolls = parse_dice_formula(formula)
     total_damage = base_value
     detail_parts = []
+    dice_results_info = []  # 存储所有骰子结果信息
     
     if base_value > 0:
         detail_parts.append(str(base_value))
     
     for num_dice, faces in dice_rolls:
-        roll_result = roll_dice(num_dice, faces)
-        total_damage += roll_result
-        detail_parts.append(f"{num_dice}d{faces}({roll_result})")
+        roll_total, roll_results = roll_dice(num_dice, faces)
+        total_damage += roll_total
+        detail_parts.append(f"{num_dice}d{faces}({roll_total})")
+        
+        # 记录骰子结果信息
+        dice_results_info.append({
+            'num_dice': num_dice,
+            'faces': faces,
+            'results': roll_results,
+            'total': roll_total
+        })
     
     detail_text = " + ".join(detail_parts) if detail_parts else "0"
     
-    return total_damage, detail_text
+    return total_damage, detail_text, dice_results_info
 
 def calculate_attack_defense_modifier(attacker_attack, target_defense):
     """

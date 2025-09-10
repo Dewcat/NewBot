@@ -782,3 +782,81 @@ def update_character_actions(character_id, current_actions):
         return False
     finally:
         conn.close()
+
+# 技能冷却时间相关查询
+
+def get_character_cooldowns(character_id):
+    """
+    获取角色的所有技能冷却时间
+    
+    Args:
+        character_id (int): 角色ID
+        
+    Returns:
+        dict: 技能ID到冷却时间的映射
+    """
+    character = get_character(character_id)
+    if not character:
+        return {}
+    
+    # 解析状态数据
+    try:
+        status = character.get('status', {})
+        if isinstance(status, str):
+            status = json.loads(status)
+        elif status is None:
+            status = {}
+    except (json.JSONDecodeError, TypeError):
+        status = {}
+    
+    cooldowns = status.get('cooldowns', {})
+    
+    # 将字符串键转换为整数键
+    result = {}
+    for skill_id_str, cooldown in cooldowns.items():
+        try:
+            skill_id = int(skill_id_str)
+            result[skill_id] = cooldown
+        except ValueError:
+            continue
+    
+    return result
+
+def update_character_cooldowns(character_id, cooldowns_dict):
+    """
+    批量更新角色的技能冷却时间
+    
+    Args:
+        character_id (int): 角色ID
+        cooldowns_dict (dict): 技能ID到冷却时间的映射
+    """
+    character = get_character(character_id)
+    if not character:
+        return False
+    
+    # 解析当前状态
+    try:
+        status = character.get('status', {})
+        if isinstance(status, str):
+            status = json.loads(status)
+        elif status is None:
+            status = {}
+    except (json.JSONDecodeError, TypeError):
+        status = {}
+    
+    # 确保有cooldowns字段
+    if 'cooldowns' not in status:
+        status['cooldowns'] = {}
+    
+    # 更新冷却时间
+    for skill_id, cooldown in cooldowns_dict.items():
+        if cooldown <= 0:
+            # 冷却时间为0或负数，删除该技能的冷却记录
+            if str(skill_id) in status['cooldowns']:
+                del status['cooldowns'][str(skill_id)]
+        else:
+            # 更新冷却时间
+            status['cooldowns'][str(skill_id)] = cooldown
+    
+    # 更新角色状态
+    return update_character_status(character_id, json.dumps(status))

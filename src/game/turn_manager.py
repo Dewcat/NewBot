@@ -47,6 +47,13 @@ class TurnManager:
         # 恢复行动次数（开始新回合）
         self._restore_single_character_actions(character_id)
         
+        # 处理情感系统回合开始效果
+        emotion_messages = self._process_emotion_turn_start(character_id)
+        if emotion_messages:
+            if not end_messages:
+                end_messages = []
+            end_messages.extend(emotion_messages)
+        
         # 处理回合开始效果（如加速）
         from character.status_effects import process_start_turn_effects
         start_messages = process_start_turn_effects(character_id)
@@ -129,6 +136,31 @@ class TurnManager:
         """重置回合计数器到0"""
         self.current_turn = 0
         logger.info("回合计数器已重置到0")
+    
+    def _process_emotion_turn_start(self, character_id: int) -> List[str]:
+        """处理角色回合开始时的情感系统效果"""
+        messages = []
+        
+        try:
+            from character.emotion_system import apply_emotion_effects
+            
+            # 应用情感效果（如强壮、守护等）
+            emotion_effect_messages = apply_emotion_effects(character_id)
+            messages.extend(emotion_effect_messages)
+            
+        except Exception as e:
+            logger.error(f"处理情感系统回合开始效果时出错: {e}")
+        
+        return messages
+    
+    def process_all_emotion_upgrades(self) -> List[str]:
+        """处理所有角色的情感升级"""
+        try:
+            from character.emotion_system import process_emotion_upgrades
+            return process_emotion_upgrades()
+        except Exception as e:
+            logger.error(f"处理情感升级时出错: {e}")
+            return []
     
     def get_current_turn(self) -> int:
         """获取当前回合数"""

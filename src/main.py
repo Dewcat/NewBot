@@ -99,18 +99,18 @@ async def help_command(update: Update, context: CallbackContext) -> None:
 - 🧘 自我技能: 只对施法者生效，无需选择目标
 - 🌀 AOE技能: 范围技能，对所有目标生效
 
-� 新特性 - AOE技能分类:
+🔰 新特性 - AOE技能分类:
 - aoe_damage: 对所有敌方造成伤害 🔥
 - aoe_healing: 治疗所有友方 💚  
 - aoe_buff: 给所有友方添加增益 ✨
-- aoe_debuff: 给所有敌方添加减益 �
+- aoe_debuff: 给所有敌方添加减益 🔰
 
-� 统一百分比效果系统:
+🔰 统一百分比效果系统:
 - 次要效果支持percentage字段
 - 基于主效果数值计算百分比效果
 - 例: 造成100伤害，次要治疗20% = 20点治疗
 
-� 完整功能说明请查看: SIMPLEBOT_MANUAL.md
+🔰 完整功能说明请查看: SIMPLEBOT_MANUAL.md
 包含详细的系统架构、数据库结构、高级功能等说明
     """
     await update.message.reply_text(help_text)
@@ -118,10 +118,20 @@ async def help_command(update: Update, context: CallbackContext) -> None:
 async def end_turn_command(update: Update, context: CallbackContext) -> None:
     """结束当前回合，处理状态效果"""
     try:
-        messages = turn_manager.end_battle_turn()
+        # 首先处理情感升级（回合开始时）
+        emotion_upgrade_messages = turn_manager.process_all_emotion_upgrades()
+        
+        # 然后处理其他回合结束效果
+        turn_messages = turn_manager.end_battle_turn()
+        
+        # 合并所有消息
+        all_messages = []
+        if emotion_upgrade_messages:
+            all_messages.extend(emotion_upgrade_messages)
+        all_messages.extend(turn_messages)
         
         # 将消息合并成一个字符串发送
-        result_text = "\n".join(messages)
+        result_text = "\n".join(all_messages)
         
         # 限制消息长度，防止太长
         if len(result_text) > 4000:

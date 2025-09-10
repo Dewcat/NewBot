@@ -16,6 +16,7 @@ from game.damage_calculator import (
     apply_damage_with_stagger
 )
 from skill.effect_target_resolver import target_resolver
+from character.emotion_system import add_emotion_coins
 
 class SkillEffect(ABC):
     """技能效果的抽象基类"""
@@ -138,6 +139,27 @@ class SkillEffect(ABC):
         if self_effect_messages:
             result_text += "\n" + "\n".join(self_effect_messages)
         
+        # 处理情感硬币获取
+        emotion_messages = []
+        
+        # 1. 处理骰子情感硬币
+        dice_results_info = damage_result.get('dice_results_info', [])
+        for dice_info in dice_results_info:
+            dice_emotion_msgs = self.process_dice_emotion_coins(
+                attacker['id'], 
+                dice_info['results'], 
+                dice_info['faces'],
+                attacker['name']
+            )
+            emotion_messages.extend(dice_emotion_msgs)
+        
+        # 2. 处理伤害相关情感硬币
+        damage_emotion_msgs = self.process_damage_emotion_coins(attacker, target, final_damage, new_health <= 0)
+        emotion_messages.extend(damage_emotion_msgs)
+        
+        if emotion_messages:
+            result_text += "\n" + "\n".join(emotion_messages)
+        
         return {
             'total_damage': final_damage,
             'result_text': result_text,
@@ -180,6 +202,11 @@ class SkillEffect(ABC):
         self_effect_messages = self.apply_self_effects(attacker, skill_info, heal_amount, 'healing')
         if self_effect_messages:
             result_text += "\n" + "\n".join(self_effect_messages)
+        
+        # 处理治疗相关的情感硬币获取
+        healing_emotion_messages = self.process_healing_emotion_coins(attacker, heal_target, actual_heal)
+        if healing_emotion_messages:
+            result_text += "\n" + "\n".join(healing_emotion_messages)
         
         return {
             'total_damage': -actual_heal,
@@ -231,10 +258,15 @@ class SkillEffect(ABC):
         if actual_heal < heal_amount:
             result_text += f"（生命值已满，实际恢复{actual_heal}点）"
         
+        # 处理治疗相关的情感硬币获取（简化版，不显示详细消息）
+        healing_emotion_messages = self.process_healing_emotion_coins(attacker, heal_target, actual_heal)
+        # 对于AOE治疗，我们不在这里显示详细的情感硬币消息，而是在AOE结果中统一处理
+        
         return {
             'total_damage': -actual_heal,
             'result_text': result_text,
-            'target_health': new_health
+            'target_health': new_health,
+            'emotion_messages': healing_emotion_messages  # 返回情感硬币消息供上级处理
         }
     
     def calculate_healing_amount(self, healer, skill_info):
@@ -568,12 +600,17 @@ class SkillEffect(ABC):
         # 对每个目标执行治疗
         total_healing = 0
         healing_messages = []
+        all_emotion_messages = []  # 收集所有情感硬币消息
         
         for ally_target in targets:
             healing_result = self.execute_healing_without_self_effects(attacker, ally_target, skill_info)
             heal_amount = abs(healing_result['total_damage'])  # 治疗返回负伤害
             total_healing += heal_amount
             healing_messages.append(f"→ {ally_target['name']}: 恢复 {heal_amount} 点生命值")
+            
+            # 收集情感硬币消息
+            if 'emotion_messages' in healing_result:
+                all_emotion_messages.extend(healing_result['emotion_messages'])
         
         # 处理技能的次要效果（传递总治疗量作为主效果值）
         status_messages = self.apply_skill_status_effects(attacker, None, skill_info, total_healing)
@@ -596,6 +633,10 @@ class SkillEffect(ABC):
         all_secondary_messages = status_messages + self_effect_messages + action_messages
         if all_secondary_messages:
             result_text += "\n" + "\n".join(all_secondary_messages)
+        
+        # 添加情感硬币消息
+        if all_emotion_messages:
+            result_text += "\n" + "\n".join(all_emotion_messages)
         
         return {
             'total_damage': -total_healing,  # 治疗返回负伤害
@@ -933,12 +974,13 @@ class SkillEffect(ABC):
             }
         
         # 使用新的高级伤害计算系统
-        final_damage, damage_details = calculate_advanced_damage(skill_info, attacker, target)
+        final_damage, damage_details, dice_results_info = calculate_advanced_damage(skill_info, attacker, target)
         
         return {
             'total_damage': final_damage,
             'damage_details': damage_details,
-            'damage_type': skill_info.get('damage_type', 'physical')
+            'damage_type': skill_info.get('damage_type', 'physical'),
+            'dice_results_info': dice_results_info  # 添加骰子结果信息
         }
     
     def apply_self_effects(self, attacker, skill_info, skill_effect_value=0, effect_type='damage'):
@@ -1040,6 +1082,162 @@ class SkillEffect(ABC):
                 return int(skill_effect_value * percentage / 100)
         
         return 0
+    
+    def process_damage_emotion_coins(self, attacker, target, damage_dealt, target_died):
+        """
+        处理伤害相关的情感硬币获取
+        
+        Args:
+            attacker: 攻击者信息
+            target: 目标信息
+            damage_dealt: 实际造成的伤害
+            target_died: 目标是否死亡
+            
+        Returns:
+            list: 情感硬币获取消息
+        """
+        messages = []
+        
+        try:
+            # 造成伤害时获得1个正面情感硬币（基于次数）
+            positive_coins = 1  # 每次造成伤害获得1个硬币
+            
+            # 击杀目标获得额外正面情感硬币
+            if target_died:
+                positive_coins += 2
+                
+            if positive_coins > 0:
+                result = add_emotion_coins(
+                    attacker['id'], 
+                    positive=positive_coins,
+                    source=f"造成{damage_dealt}伤害" + ("并击杀目标" if target_died else "")
+                )
+                
+                if result.get('success') and result.get('coins_added'):
+                    msg = f"🎭 {attacker['name']} 获得{positive_coins}个正面情感硬币"
+                    if result.get('upgrade_pending'):
+                        msg += f"，准备升级到{result['target_level']}级！"
+                    messages.append(msg)
+                    
+            # 受到伤害时获得1个负面情感硬币（基于次数）
+            negative_coins = 1  # 每次受到伤害获得1个硬币
+            
+            if negative_coins > 0:
+                result = add_emotion_coins(
+                    target['id'],
+                    negative=negative_coins,
+                    source=f"受到{damage_dealt}伤害"
+                )
+                
+                if result.get('success') and result.get('coins_added'):
+                    msg = f"🎭 {target['name']} 获得{negative_coins}个负面情感硬币"
+                    if result.get('upgrade_pending'):
+                        msg += f"，准备升级到{result['target_level']}级！"
+                    messages.append(msg)
+                    
+        except Exception as e:
+            print(f"处理情感硬币时出错: {e}")
+        
+        return messages
+    
+    def process_healing_emotion_coins(self, healer, target, healing_amount):
+        """
+        处理治疗相关的情感硬币获取
+        
+        Args:
+            healer: 治疗者信息
+            target: 目标信息
+            healing_amount: 实际治疗量
+            
+        Returns:
+            list: 情感硬币获取消息
+        """
+        messages = []
+        
+        try:
+            # 造成治疗时获得1个正面情感硬币（基于次数）
+            positive_coins_healer = 1  # 治疗者每次治疗获得1个正面硬币
+            
+            result_healer = add_emotion_coins(
+                healer['id'], 
+                positive=positive_coins_healer,
+                source=f"治疗{healing_amount}点生命值"
+            )
+            
+            if result_healer.get('success') and result_healer.get('coins_added'):
+                msg = f"🎭 {healer['name']} 获得{positive_coins_healer}个正面情感硬币"
+                if result_healer.get('upgrade_pending'):
+                    msg += f"，准备升级到{result_healer['target_level']}级！"
+                messages.append(msg)
+            
+            # 接受治疗时也获得1个正面情感硬币（基于次数）
+            # 只有当治疗者和被治疗者不是同一人时才给被治疗者硬币
+            if healer['id'] != target['id']:
+                positive_coins_target = 1  # 被治疗者每次接受治疗获得1个正面硬币
+                
+                result_target = add_emotion_coins(
+                    target['id'],
+                    positive=positive_coins_target,
+                    source=f"接受{healing_amount}点治疗"
+                )
+                
+                if result_target.get('success') and result_target.get('coins_added'):
+                    msg = f"🎭 {target['name']} 获得{positive_coins_target}个正面情感硬币"
+                    if result_target.get('upgrade_pending'):
+                        msg += f"，准备升级到{result_target['target_level']}级！"
+                    messages.append(msg)
+                    
+        except Exception as e:
+            print(f"处理治疗情感硬币时出错: {e}")
+        
+        return messages
+    
+    def process_dice_emotion_coins(self, character_id, dice_results, dice_sides, character_name):
+        """
+        处理骰子相关的情感硬币获取
+        
+        Args:
+            character_id: 角色ID
+            dice_results: 骰子结果列表
+            dice_sides: 骰子面数
+            character_name: 角色名称
+            
+        Returns:
+            list: 情感硬币获取消息
+        """
+        messages = []
+        
+        try:
+            from character.emotion_system import EmotionSystem
+            
+            positive_coins, negative_coins = EmotionSystem.get_emotion_coins_from_dice_roll(
+                dice_results, dice_sides
+            )
+            
+            if positive_coins > 0 or negative_coins > 0:
+                result = add_emotion_coins(
+                    character_id,
+                    positive_coins=positive_coins,
+                    negative_coins=negative_coins,
+                    source=f"骰子结果：{dice_results}"
+                )
+                
+                if result.get('success') and result.get('coins_added'):
+                    coin_details = []
+                    if positive_coins > 0:
+                        coin_details.append(f"{positive_coins}个正面硬币")
+                    if negative_coins > 0:
+                        coin_details.append(f"{negative_coins}个负面硬币")
+                    
+                    msg = f"🎲 {character_name} 获得{' 和 '.join(coin_details)}"
+                    if result.get('upgrade_pending'):
+                        msg += f"，准备升级到{result['target_level']}级！"
+                    messages.append(msg)
+                    
+        except Exception as e:
+            print(f"处理骰子情感硬币时出错: {e}")
+        
+        return messages
     
     @abstractmethod
     def apply_special_effects(self, attacker, target, skill_info, damage_result):
