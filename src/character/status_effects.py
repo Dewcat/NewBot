@@ -296,7 +296,74 @@ def process_single_effect_end_turn(character: Dict, effect: StatusEffect) -> Opt
         # 加速效果在回合开始时处理，这里什么都不做
         return None
     
+    elif effect.effect_name == 'dark_domain':
+        # 黑夜领域：回合结束时触发复杂效果
+        return process_dark_domain_end_turn(character_id, character_name, effect.intensity, effect.duration)
+    
     return None
+
+def process_dark_domain_end_turn(character_id: int, character_name: str, intensity: int, duration: int) -> Optional[str]:
+    """处理黑夜领域的回合结束效果"""
+    messages = []
+    
+    try:
+        # 添加6级1层强壮
+        add_status_effect(character_id, 'buff', 'strong', 6, 1)
+        messages.append(f"🌑 {character_name} 的黑夜领域赋予了 6级强壮")
+        
+        # 添加6级1层易伤
+        add_status_effect(character_id, 'debuff', 'vulnerable', 6, 1)  
+        messages.append(f"🌑 {character_name} 的黑夜领域也带来了 6级易伤")
+        
+        # 添加1级1层加速
+        add_status_effect(character_id, 'buff', 'haste', 1, 1)
+        messages.append(f"🌑 {character_name} 的黑夜领域提供了 1级加速")
+        
+        # 添加666枚负面情感硬币
+        from character.emotion_system import add_emotion_coins
+        coin_result = add_emotion_coins(character_id, 0, 666, "黑夜领域效果")
+        if coin_result.get('success'):
+            messages.append(f"🌑 {character_name} 从黑夜领域获得了 666枚负面情感硬币")
+            
+        return " → ".join(messages)
+        
+    except Exception as e:
+        logger.error(f"处理黑夜领域效果时出错: {e}")
+        return f"🌑 {character_name} 的黑夜领域效果触发"
+
+def check_dark_domain_death_immunity(character_id: int, incoming_damage: int) -> Tuple[bool, int, List[str]]:
+    """检查黑夜领域的死亡免疫效果
+    
+    Returns:
+        Tuple[bool, int, List[str]]: (是否免疫死亡, 修改后的伤害, 效果消息)
+    """
+    effects = get_character_status_effects(character_id)
+    messages = []
+    character = get_character(character_id)
+    
+    if not character:
+        return False, incoming_damage, messages
+    
+    character_name = character['name']
+    current_health = character['health']
+    
+    # 检查是否有黑夜领域效果且即将死亡
+    for effect in effects:
+        if effect.effect_name == 'dark_domain' and effect.duration > 0:
+            if current_health - incoming_damage <= 0:
+                # 触发死亡免疫
+                messages.append(f"🛡️ {character_name} 的黑夜领域保护生效！免疫致命伤害")
+                
+                # 将生命值设为1
+                update_character_health(character_id, 1)
+                
+                # 清空所有黑夜领域层数
+                remove_status_effect(character_id, 'dark_domain')
+                messages.append(f"🌑 {character_name} 的黑夜领域消散了...")
+                
+                return True, 0, messages  # 免疫所有伤害
+    
+    return False, incoming_damage, messages
 
 def process_hit_effects(character_id: int, incoming_damage: int) -> Tuple[int, List[str]]:
     """处理受击时的状态效果
@@ -308,6 +375,11 @@ def process_hit_effects(character_id: int, incoming_damage: int) -> Tuple[int, L
     Returns:
         Tuple[int, List[str]]: (修改后的伤害, 效果描述信息)
     """
+    # 首先检查黑夜领域的死亡免疫
+    immune, immune_damage, immune_messages = check_dark_domain_death_immunity(character_id, incoming_damage)
+    if immune:
+        return immune_damage, immune_messages
+    
     effects = get_character_status_effects(character_id)
     messages = []
     final_damage = incoming_damage

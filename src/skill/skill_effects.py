@@ -134,7 +134,30 @@ class SkillEffect(ABC):
         if detail_messages:
             result_text += "\n" + "\n".join(detail_messages)
         
-        # 处理自我效果（自我伤害/治疗），传递实际伤害值
+        # 处理条件伤害（如兽之数技能）
+        if skill_info:
+            effects = json.loads(skill_info.get('effects', '{}'))
+            if 'conditional_damage' in effects:
+                conditional_damage = effects['conditional_damage']
+                condition_met = self._check_conditional_damage_condition(attacker, conditional_damage.get('condition'))
+                
+                if condition_met:
+                    # 计算条件伤害
+                    conditional_formula = conditional_damage.get('damage_formula', '1d6')
+                    from game.damage_calculator import calculate_damage_from_formula
+                    conditional_base, conditional_detail, _ = calculate_damage_from_formula(conditional_formula)
+                    
+                    # 应用相同的修正（攻防、抗性等）
+                    conditional_modified, _, _ = calculate_damage_modifiers(attacker['id'], conditional_base)
+                    conditional_final, conditional_messages = process_hit_effects(target['id'], conditional_modified)
+                    
+                    # 应用条件伤害
+                    new_health = max(0, target['health'] - conditional_final)
+                    update_character_health(target['id'], new_health)
+                    
+                    result_text += f"\n🌑 条件伤害触发：{conditional_detail} → 追加 {conditional_final} 点魔法伤害"
+                    if conditional_messages:
+                        result_text += "\n" + "\n".join(conditional_messages)
         self_effect_messages = self.apply_self_effects(attacker, skill_info, final_damage, 'damage')
         if self_effect_messages:
             result_text += "\n" + "\n".join(self_effect_messages)
@@ -1264,6 +1287,21 @@ class DefaultSkillEffect(SkillEffect):
     def apply_special_effects(self, attacker, target, skill_info, damage_result):
         """保留兼容性的方法"""
         return self.execute(attacker, target, skill_info)
+    
+    def _check_conditional_damage_condition(self, attacker, condition):
+        """检查条件伤害的触发条件"""
+        if not condition:
+            return False
+            
+        from character.status_effects import get_character_status_effects
+        
+        if condition == "self_has_dark_domain":
+            # 检查攻击者是否有黑夜领域状态
+            status_effects = get_character_status_effects(attacker['id'])
+            return any(effect.get('name') == '黑夜领域' for effect in status_effects)
+        
+        # 可以添加其他条件
+        return False
 
 class SkillEffectRegistry:
     """技能效果注册表"""

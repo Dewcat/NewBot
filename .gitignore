@@ -11,8 +11,6 @@ venv/
 env/
 ENV/
 
-# 数据库文件
-data/
 
 # 日志文件
 *.log
