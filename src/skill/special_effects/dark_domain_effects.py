@@ -51,7 +51,7 @@ class DarkDomainStatus(StatusEffect):
         
         for effect in status_effects:
             if effect.effect_name == 'dark_domain':
-                return effect.value
+                return effect.intensity
         return 0
     
     def has_dark_domain(self, character_id: int) -> bool:

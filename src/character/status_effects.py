@@ -154,7 +154,8 @@ def add_status_effect(character_id: int, effect_type: str, effect_name: str,
         duration: 持续时间
         immediate_effect: 是否立即生效（用于回合中获得的效果）
     
-    如果角色已有同名状态效果，则强度取较高值，层数累加
+    叠加规则: 相同状态效果可叠加层数，强度取最大值
+    特别地，如果增加效果层数为0，则如果原本没有此效果，将层数置为1，否则只更新强度
     """
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -174,10 +175,16 @@ def add_status_effect(character_id: int, effect_type: str, effect_name: str,
                                       immediate_effect, existing, cursor, conn)
         
         if existing:
-            # 已有同名效果，强度取较高值，层数累加
+            # 已有同名效果，根据新规则处理
             old_intensity, old_duration = existing
-            new_intensity = max(old_intensity, intensity)
-            new_duration = old_duration + duration
+            new_intensity = max(old_intensity, intensity)  # 强度取最大值
+            
+            if duration == 0:
+                # 如果增加效果层数为0，只更新强度，不改变层数
+                new_duration = old_duration
+            else:
+                # 层数叠加
+                new_duration = old_duration + duration
             
             cursor.execute("""
                 UPDATE character_status_effects
@@ -186,6 +193,10 @@ def add_status_effect(character_id: int, effect_type: str, effect_name: str,
             """, (new_intensity, new_duration, character_id, effect_name))
         else:
             # 新增状态效果
+            if duration == 0:
+                # 如果增加效果层数为0且原本没有此效果，将层数置为1
+                duration = 1
+                
             cursor.execute("""
                 INSERT INTO character_status_effects 
                 (character_id, effect_type, effect_name, intensity, duration)
@@ -213,10 +224,16 @@ def _handle_haste_effect(character_id: int, effect_type: str, intensity: int, du
     """
     
     if existing:
-        # 已有加速效果，只延长持续时间，不叠加强度
+        # 已有加速效果，根据新规则处理
         old_intensity, old_duration = existing
-        new_duration = old_duration + duration
         # 加速强度始终为1，不叠加
+        
+        if duration == 0:
+            # 如果增加效果层数为0，只更新强度（但加速强度固定为1），不改变层数
+            new_duration = old_duration
+        else:
+            # 层数叠加
+            new_duration = old_duration + duration
         
         cursor.execute("""
             UPDATE character_status_effects
@@ -227,6 +244,10 @@ def _handle_haste_effect(character_id: int, effect_type: str, intensity: int, du
         conn.commit()
     else:
         # 新增加速效果，强度固定为1
+        if duration == 0:
+            # 如果增加效果层数为0且原本没有此效果，将层数置为1
+            duration = 1
+            
         cursor.execute("""
             INSERT INTO character_status_effects 
             (character_id, effect_type, effect_name, intensity, duration)

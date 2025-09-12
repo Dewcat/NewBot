@@ -29,17 +29,7 @@ def create_character(name="", character_type="friendly", health=100, attack=10, 
         conn.commit()
         character_id = cursor.lastrowid
         
-        # 添加默认技能（ID为1的普通攻击），但先检查是否已存在
-        cursor.execute(
-            "SELECT COUNT(*) FROM character_skills WHERE character_id = ? AND skill_id = ?",
-            (character_id, 1)
-        )
-        if cursor.fetchone()[0] == 0:
-            cursor.execute(
-                "INSERT INTO character_skills (character_id, skill_id) VALUES (?, ?)",
-                (character_id, 1)
-            )
-        conn.commit()
+        # 不再自动分配默认技能，角色创建后需要手动分配技能
         return character_id
     except Exception as e:
         logger.error(f"创建角色时出错: {e}")
