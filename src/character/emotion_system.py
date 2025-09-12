@@ -22,24 +22,24 @@ class EmotionSystem:
         5: 9
     }
     
-    # 正面情感升级效果池
+    # 正面情感升级效果池 (暂时禁用增益效果)
     POSITIVE_EMOTION_EFFECTS = [
-        {
-            'type': 'buff',
-            'name': 'strong',
-            'intensity': 1,
-            'description': '每回合开始时获得1级强壮'
-        }
+        # {
+        #     'type': 'buff',
+        #     'name': 'strong',
+        #     'intensity': 1,
+        #     'description': '每回合开始时获得1级强壮'
+        # }
     ]
     
-    # 负面情感升级效果池  
+    # 负面情感升级效果池 (暂时禁用增益效果)  
     NEGATIVE_EMOTION_EFFECTS = [
-        {
-            'type': 'buff',
-            'name': 'guard',
-            'intensity': 1,
-            'description': '每回合开始时获得1级守护'
-        }
+        # {
+        #     'type': 'buff',
+        #     'name': 'guard',
+        #     'intensity': 1,
+        #     'description': '每回合开始时获得1级守护'
+        # }
     ]
 
     @classmethod
@@ -197,7 +197,10 @@ class EmotionSystem:
         else:
             effect_pool = cls.NEGATIVE_EMOTION_EFFECTS
         
-        selected_effect = random.choice(effect_pool)
+        # 如果效果池为空，则不添加效果（暂时禁用增益效果）
+        selected_effect = None
+        if effect_pool:
+            selected_effect = random.choice(effect_pool)
         
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -216,8 +219,9 @@ class EmotionSystem:
             # 降低所有技能冷却1回合
             cls._reduce_all_skill_cooldowns(character_id)
             
-            # 添加情感效果
-            cls._add_emotion_effect(character_id, selected_effect)
+            # 添加情感效果 (使用当前连接) - 仅在有效果时添加
+            if selected_effect:
+                cls._add_emotion_effect_with_connection(cursor, character_id, selected_effect)
             
             # 记录升级历史
             cursor.execute('''
@@ -230,7 +234,10 @@ class EmotionSystem:
             
             # 构建升级消息
             upgrade_msg = f"🎭 {name} 情感等级提升到 {new_level} 级！"
-            upgrade_msg += f"\n✨ 获得效果：{selected_effect['description']}"
+            if selected_effect:
+                upgrade_msg += f"\n✨ 获得效果：{selected_effect['description']}"
+            else:
+                upgrade_msg += f"\n💤 升级效果已暂时禁用"
             upgrade_msg += f"\n⏰ 所有技能冷却时间-1回合"
             
             return {
@@ -260,6 +267,20 @@ class EmotionSystem:
                 
         except Exception as e:
             logger.error(f"降低技能冷却失败: {e}")
+
+    @classmethod
+    def _add_emotion_effect_with_connection(cls, cursor, character_id: int, effect_config: Dict):
+        """使用已有连接添加情感升级效果"""
+        try:
+            cursor.execute('''
+                INSERT INTO character_emotion_effects 
+                (character_id, effect_type, effect_name, intensity)
+                VALUES (?, ?, ?, ?)
+            ''', (character_id, effect_config['type'], effect_config['name'], effect_config['intensity']))
+            
+        except Exception as e:
+            logger.error(f"添加情感效果失败: {e}")
+            raise e
 
     @classmethod
     def _add_emotion_effect(cls, character_id: int, effect_config: Dict):
@@ -325,6 +346,10 @@ class EmotionSystem:
         Returns:
             tuple: (是否满足要求, 错误信息)
         """
+        # 处理skill_info为None的情况（普通攻击）
+        if not skill_info:
+            return True, ""
+            
         required_level = skill_info.get('required_emotion_level', 0)
         if required_level <= 0:
             return True, ""
@@ -360,9 +385,9 @@ class EmotionSystem:
 # 情感系统的便捷函数
 emotion_system = EmotionSystem()
 
-def add_emotion_coins(character_id: int, positive: int = 0, negative: int = 0, source: str = "") -> Dict:
+def add_emotion_coins(character_id: int, positive_coins: int = 0, negative_coins: int = 0, source: str = "") -> Dict:
     """添加情感硬币的便捷函数"""
-    return emotion_system.add_emotion_coins(character_id, positive, negative, source)
+    return emotion_system.add_emotion_coins(character_id, positive_coins, negative_coins, source)
 
 def process_emotion_upgrades() -> List[str]:
     """处理情感升级的便捷函数"""

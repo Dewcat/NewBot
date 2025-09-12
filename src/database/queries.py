@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 
 # 角色相关查询
 
-def create_character(name="", character_type="friendly", health=100, attack=10, defense=5):
+def create_character(name="", character_type="friendly", health=100, attack=10, defense=5, actions_per_turn=1):
     """创建一个新角色
     
     Args:
@@ -15,23 +15,30 @@ def create_character(name="", character_type="friendly", health=100, attack=10, 
         health: 初始生命值
         attack: 攻击力
         defense: 防御力
+        actions_per_turn: 每回合行动次数，默认为1
     """
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
         cursor.execute(
-            "INSERT INTO characters (name, character_type, health, max_health, attack, defense) VALUES (?, ?, ?, ?, ?, ?)",
-            (name, character_type, health, health, attack, defense)
+            """INSERT INTO characters (name, character_type, health, max_health, attack, defense, actions_per_turn, current_actions) 
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (name, character_type, health, health, attack, defense, actions_per_turn, actions_per_turn)
         )
         conn.commit()
         character_id = cursor.lastrowid
         
-        # 添加默认技能（ID为1的普通攻击）
+        # 添加默认技能（ID为1的普通攻击），但先检查是否已存在
         cursor.execute(
-            "INSERT INTO character_skills (character_id, skill_id) VALUES (?, ?)",
+            "SELECT COUNT(*) FROM character_skills WHERE character_id = ? AND skill_id = ?",
             (character_id, 1)
         )
+        if cursor.fetchone()[0] == 0:
+            cursor.execute(
+                "INSERT INTO character_skills (character_id, skill_id) VALUES (?, ?)",
+                (character_id, 1)
+            )
         conn.commit()
         return character_id
     except Exception as e:
@@ -321,15 +328,31 @@ def reset_character(character_id):
         
         max_health, actions_per_turn = result
         
-        # 重置角色状态：恢复满血、清空status字段、恢复行动次数、重置混乱值
-        cursor.execute(
-            "UPDATE characters SET health = ?, status = '{}', current_actions = ?, stagger_value = max_stagger_value, stagger_status = 'normal', stagger_turns_remaining = 0 WHERE id = ?",
-            (max_health, actions_per_turn, character_id)
-        )
+        # 重置角色状态：恢复满血、清空status字段、恢复行动次数、重置混乱值、重置情感系统
+        cursor.execute("""
+            UPDATE characters 
+            SET health = ?, 
+                status = '{}', 
+                current_actions = ?, 
+                stagger_value = max_stagger_value, 
+                stagger_status = 'normal', 
+                stagger_turns_remaining = 0,
+                emotion_level = 0,
+                positive_emotion_coins = 0,
+                negative_emotion_coins = 0,
+                pending_emotion_upgrade = 0
+            WHERE id = ?
+        """, (max_health, actions_per_turn, character_id))
         
         # 清除状态效果表中的所有buff/debuff
         cursor.execute("""
             DELETE FROM character_status_effects
+            WHERE character_id = ?
+        """, (character_id,))
+        
+        # 清除情感效果表中的所有效果
+        cursor.execute("""
+            DELETE FROM character_emotion_effects
             WHERE character_id = ?
         """, (character_id,))
         
@@ -339,6 +362,74 @@ def reset_character(character_id):
         logger.error(f"重置角色状态时出错: {e}")
         conn.rollback()
         return False
+    finally:
+        conn.close()
+
+def set_character_actions_per_turn(character_id, actions_per_turn):
+    """修改角色每回合行动次数
+    
+    Args:
+        character_id: 角色ID
+        actions_per_turn: 新的每回合行动次数
+    """
+    if actions_per_turn < 1:
+        logger.warning("行动次数不能小于1")
+        return False
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # 检查角色是否存在
+        cursor.execute("SELECT name FROM characters WHERE id = ?", (character_id,))
+        result = cursor.fetchone()
+        if not result:
+            logger.error(f"未找到角色ID: {character_id}")
+            return False
+        
+        character_name = result[0]
+        
+        # 更新每回合行动次数和当前行动次数
+        cursor.execute(
+            "UPDATE characters SET actions_per_turn = ?, current_actions = ? WHERE id = ?",
+            (actions_per_turn, actions_per_turn, character_id)
+        )
+        
+        conn.commit()
+        logger.info(f"角色 {character_name}(ID:{character_id}) 的每回合行动次数已设置为 {actions_per_turn}")
+        return True
+    except Exception as e:
+        logger.error(f"修改角色行动次数时出错: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+def get_character_action_info(character_id):
+    """获取角色行动信息
+    
+    Returns:
+        dict: 包含current_actions和actions_per_turn的字典，或None
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute(
+            "SELECT current_actions, actions_per_turn, name FROM characters WHERE id = ?",
+            (character_id,)
+        )
+        result = cursor.fetchone()
+        if result:
+            return {
+                'current_actions': result[0],
+                'actions_per_turn': result[1],
+                'name': result[2]
+            }
+        return None
+    except Exception as e:
+        logger.error(f"获取角色行动信息时出错: {e}")
+        return None
     finally:
         conn.close()
 
@@ -469,7 +560,7 @@ def get_skill_by_id(skill_id):
     cursor = conn.cursor()
     
     try:
-        cursor.execute("SELECT id, name, description, cooldown FROM skills WHERE id = ?", (skill_id,))
+        cursor.execute("SELECT id, name, description, cooldown, effects, skill_category, damage_formula, damage_type FROM skills WHERE id = ?", (skill_id,))
         skill = cursor.fetchone()
         
         if not skill:
@@ -479,7 +570,11 @@ def get_skill_by_id(skill_id):
             "id": skill[0],
             "name": skill[1],
             "description": skill[2],
-            "cooldown": skill[3]
+            "cooldown": skill[3],
+            "effects": skill[4] if skill[4] else '{}',
+            "skill_category": skill[5] if skill[5] else 'damage',
+            "damage_formula": skill[6] if skill[6] else '1d6',
+            "damage_type": skill[7] if skill[7] else 'physical'
         }
     except Exception as e:
         logger.error(f"获取技能信息时出错: {e}")
@@ -599,13 +694,24 @@ def get_skill(skill_id):
         conn.close()
 
 def reset_all_characters():
-    """重置所有角色状态：恢复满血、清除冷却、移出战斗、清除所有buff/debuff"""
+    """重置所有角色状态：恢复满血、清除冷却、移出战斗、清除所有buff/debuff、重置情感系统"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
-        # 恢复所有角色的生命值到最大值，重置行动次数，重置混乱值
-        cursor.execute("UPDATE characters SET health = max_health, current_actions = actions_per_turn, stagger_value = max_stagger_value, stagger_status = 'normal', stagger_turns_remaining = 0")
+        # 恢复所有角色的生命值到最大值，重置行动次数，重置混乱值，重置情感系统
+        cursor.execute("""
+            UPDATE characters 
+            SET health = max_health, 
+                current_actions = actions_per_turn, 
+                stagger_value = max_stagger_value, 
+                stagger_status = 'normal', 
+                stagger_turns_remaining = 0,
+                emotion_level = 0,
+                positive_emotion_coins = 0,
+                negative_emotion_coins = 0,
+                pending_emotion_upgrade = 0
+        """)
         
         # 清除所有角色的状态（包括冷却时间）
         cursor.execute("UPDATE characters SET status = '{}'")
@@ -616,13 +722,16 @@ def reset_all_characters():
         # 清除状态效果表中的所有buff/debuff
         cursor.execute("DELETE FROM character_status_effects")
         
+        # 清除情感效果表中的所有效果
+        cursor.execute("DELETE FROM character_emotion_effects")
+        
         conn.commit()
         
         # 获取影响的角色数量
         cursor.execute("SELECT COUNT(*) FROM characters")
         count = cursor.fetchone()[0]
         
-        logger.info(f"已重置 {count} 个角色的状态，清除了所有状态效果")
+        logger.info(f"已重置 {count} 个角色的状态，清除了所有状态效果和情感效果")
         return count
     except Exception as e:
         logger.error(f"重置角色状态时出错: {e}")

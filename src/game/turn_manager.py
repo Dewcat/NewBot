@@ -54,18 +54,9 @@ class TurnManager:
                 end_messages = []
             end_messages.extend(emotion_messages)
         
-        # 处理回合开始效果（如加速）
-        from character.status_effects import process_start_turn_effects
-        start_messages = process_start_turn_effects(character_id)
-        
-        # 合并所有消息
-        all_messages = []
-        if end_messages:
-            all_messages.extend(end_messages)
-        if start_messages:
-            all_messages.extend(start_messages)
-            
-        return all_messages
+        # 合并消息，但不在这里处理回合开始效果（加速等）
+        # 回合开始效果将在 end_battle_turn 中统一处理
+        return end_messages
     
     def _restore_single_character_actions(self, character_id: int):
         """恢复单个角色的行动次数"""

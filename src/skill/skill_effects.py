@@ -6,7 +6,9 @@ from character.status_effects import (
     add_status_effect, 
     process_hit_effects, 
     process_action_effects,
-    calculate_damage_modifiers
+    calculate_damage_modifiers,
+    get_hardblood_amount,
+    consume_hardblood
 )
 from game.damage_calculator import (
     calculate_damage_from_formula, 
@@ -63,7 +65,7 @@ class SkillEffect(ABC):
     
     def execute_damage(self, attacker, target, skill_info):
         """执行伤害技能"""
-        # 计算基础伤害
+        # 计算基础伤害（现在包含所有追加伤害）
         damage_result = self.calculate_skill_damage(attacker, target, skill_info)
         base_damage = damage_result['total_damage']
         
@@ -131,33 +133,16 @@ class SkillEffect(ABC):
         detail_messages.extend(status_messages)
         detail_messages.extend(action_messages)
         
+        # 添加追加伤害的消息（如硬血消耗等）
+        additional_messages = damage_result.get('additional_messages', [])
+        detail_messages.extend(additional_messages)
+        
         if detail_messages:
             result_text += "\n" + "\n".join(detail_messages)
         
-        # 处理条件伤害（如兽之数技能）
-        if skill_info:
-            effects = json.loads(skill_info.get('effects', '{}'))
-            if 'conditional_damage' in effects:
-                conditional_damage = effects['conditional_damage']
-                condition_met = self._check_conditional_damage_condition(attacker, conditional_damage.get('condition'))
-                
-                if condition_met:
-                    # 计算条件伤害
-                    conditional_formula = conditional_damage.get('damage_formula', '1d6')
-                    from game.damage_calculator import calculate_damage_from_formula
-                    conditional_base, conditional_detail, _ = calculate_damage_from_formula(conditional_formula)
-                    
-                    # 应用相同的修正（攻防、抗性等）
-                    conditional_modified, _, _ = calculate_damage_modifiers(attacker['id'], conditional_base)
-                    conditional_final, conditional_messages = process_hit_effects(target['id'], conditional_modified)
-                    
-                    # 应用条件伤害
-                    new_health = max(0, target['health'] - conditional_final)
-                    update_character_health(target['id'], new_health)
-                    
-                    result_text += f"\n🌑 条件伤害触发：{conditional_detail} → 追加 {conditional_final} 点魔法伤害"
-                    if conditional_messages:
-                        result_text += "\n" + "\n".join(conditional_messages)
+        # 注意：移除了原来的条件伤害和硬血消耗处理，因为现在都在 calculate_advanced_damage 中处理了
+        
+        # 处理自我效果（但排除硬血消耗，因为已经在 calculate_advanced_damage 中处理了）
         self_effect_messages = self.apply_self_effects(attacker, skill_info, final_damage, 'damage')
         if self_effect_messages:
             result_text += "\n" + "\n".join(self_effect_messages)
@@ -764,6 +749,205 @@ class SkillEffect(ABC):
         except (json.JSONDecodeError, TypeError):
             effects = {}
         
+        # 检查是否是数组格式（新的削弱光环技能格式）
+        if isinstance(effects, list):
+            for effect_info in effects:
+                if not isinstance(effect_info, dict):
+                    continue
+                
+                effect_type = effect_info.get('type', '')
+                
+                # 处理aoe_apply_status效果
+                if effect_type == 'aoe_apply_status':
+                    target_type = effect_info.get('target_type', 'enemy')
+                    effect_name = effect_info.get('effect_name', '')
+                    intensity = effect_info.get('intensity', 1)
+                    duration = effect_info.get('duration', 1)
+                    
+                    # 获取所有目标类型的角色
+                    from database.queries import get_characters_by_type
+                    if target_type == 'enemy':
+                        attacker_type = attacker.get('character_type', 'friendly')
+                        enemy_type = 'enemy' if attacker_type == 'friendly' else 'friendly'
+                        targets = get_characters_by_type(enemy_type, in_battle=True)
+                    else:
+                        targets = [attacker]  # 默认自身
+                    
+                    # 对所有目标施加状态效果
+                    for target_char in targets:
+                        if not target_char:
+                            continue
+                        
+                        # 确定效果类型
+                        if effect_name in ['weak', 'vulnerable', 'burn', 'poison', 'rupture', 'bleeding', 'paralysis']:
+                            status_type = 'debuff'
+                        elif effect_name in ['strong', 'breathing', 'guard', 'shield', 'haste']:
+                            status_type = 'buff'
+                        else:
+                            status_type = effect_info.get('effect_type', 'debuff')
+                        
+                        success = add_status_effect(
+                            target_char['id'],
+                            status_type,
+                            effect_name,
+                            intensity,
+                            duration
+                        )
+                        
+                        if success:
+                            effect_display_names = {
+                                'weak': '虚弱',
+                                'vulnerable': '易伤',
+                                'burn': '烧伤',
+                                'poison': '中毒',
+                                'rupture': '破裂',
+                                'bleeding': '流血',
+                                'paralysis': '麻痹',
+                                'strong': '强壮',
+                                'breathing': '呼吸法',
+                                'guard': '守护',
+                                'shield': '护盾',
+                                'haste': '加速'
+                            }
+                            
+                            effect_display_name = effect_display_names.get(effect_name, effect_name)
+                            
+                            if status_type == 'buff':
+                                messages.append(f"✨ {target_char['name']} 获得了 {effect_display_name}({intensity}) 效果，持续 {duration} 回合")
+                            else:
+                                messages.append(f"💀 {target_char['name']} 受到了 {effect_display_name}({intensity}) 效果，持续 {duration} 回合")
+                
+                # 处理apply_status效果（对指定目标施加状态）
+                elif effect_type == 'apply_status':
+                    target_type = effect_info.get('target_type', 'self')
+                    effect_name = effect_info.get('effect_name', '')
+                    intensity = effect_info.get('intensity', 1)
+                    duration = effect_info.get('duration', 1)
+                    
+                    # 确定目标
+                    if target_type == 'self':
+                        apply_target = attacker
+                    else:
+                        apply_target = target  # 或其他目标逻辑
+                    
+                    if apply_target:
+                        # 确定效果类型
+                        if effect_name in ['weak', 'vulnerable', 'burn', 'poison', 'rupture', 'bleeding', 'paralysis']:
+                            status_type = 'debuff'
+                        elif effect_name in ['strong', 'breathing', 'guard', 'shield', 'haste']:
+                            status_type = 'buff'
+                        elif effect_name == 'weaken_aura':
+                            status_type = 'special'
+                        else:
+                            status_type = effect_info.get('effect_type', 'buff')
+                        
+                        success = add_status_effect(
+                            apply_target['id'],
+                            status_type,
+                            effect_name,
+                            intensity,
+                            duration
+                        )
+                        
+                        if success:
+                            effect_display_names = {
+                                'weak': '虚弱',
+                                'vulnerable': '易伤',
+                                'burn': '烧伤',
+                                'poison': '中毒',
+                                'rupture': '破裂',
+                                'bleeding': '流血',
+                                'paralysis': '麻痹',
+                                'strong': '强壮',
+                                'breathing': '呼吸法',
+                                'guard': '守护',
+                                'shield': '护盾',
+                                'haste': '加速',
+                                'weaken_aura': '削弱光环'
+                            }
+                            
+                            effect_display_name = effect_display_names.get(effect_name, effect_name)
+                            
+                            if effect_name == 'weaken_aura':
+                                messages.append(f"💜 {apply_target['name']} 释放了{effect_display_name}，持续 {duration} 回合")
+                            elif status_type == 'buff':
+                                messages.append(f"✨ {apply_target['name']} 获得了 {effect_display_name}({intensity}) 效果，持续 {duration} 回合")
+                            else:
+                                messages.append(f"💀 {apply_target['name']} 受到了 {effect_display_name}({intensity}) 效果，持续 {duration} 回合")
+            
+            return messages
+        
+        # 处理status效果数组（旧格式）
+        if 'status' in effects:
+            status_effects_list = effects['status']
+            if isinstance(status_effects_list, list):
+                for status_info in status_effects_list:
+                    if not isinstance(status_info, dict):
+                        continue
+                    
+                    # 解析目标
+                    target_type = status_info.get('target', 'skill_target')
+                    status_targets = target_resolver.resolve_target(target_type, attacker, target)
+                    
+                    # 应用状态效果
+                    for status_target in status_targets:
+                        if not status_target:
+                            continue
+                        
+                        effect_name = status_info.get('effect', '')
+                        effect_value = status_info.get('value', 1)
+                        effect_turns = status_info.get('turns', 1)
+                        
+                        # 确定效果类型
+                        if effect_name in ['strong', 'breathing', 'guard', 'shield', 'haste']:
+                            effect_type = 'buff'
+                        elif effect_name in ['burn', 'poison', 'rupture', 'bleeding', 'weak', 'vulnerable', 'paralysis']:
+                            effect_type = 'debuff'
+                        elif effect_name in ['hardblood']:
+                            effect_type = 'hardblood'  # 硬血是特殊效果类型
+                        else:
+                            # 特殊效果如dark_domain默认为buff
+                            effect_type = 'buff'
+                        
+                        success = add_status_effect(
+                            status_target['id'],
+                            effect_type,
+                            effect_name,
+                            effect_value,
+                            effect_turns
+                        )
+                        
+                        if success:
+                            effect_display_names = {
+                                'dark_domain': '黑夜领域',
+                                'strong': '强壮',
+                                'breathing': '呼吸法',
+                                'guard': '守护',
+                                'shield': '护盾',
+                                'haste': '加速',
+                                'burn': '烧伤',
+                                'poison': '中毒',
+                                'rupture': '破裂',
+                                'bleeding': '流血',
+                                'weak': '虚弱',
+                                'vulnerable': '易伤',
+                                'paralysis': '麻痹',
+                                'hardblood': '硬血'
+                            }
+                            
+                            effect_display_name = effect_display_names.get(effect_name, effect_name)
+                            
+                            if effect_name == 'shield':
+                                messages.append(f"✨ {status_target['name']} 获得了 {effect_value} 点{effect_display_name}")
+                            elif effect_name == 'hardblood':
+                                messages.append(f"🩸 {status_target['name']} 获得了 {effect_value} 点{effect_display_name}")
+                            elif effect_name == 'paralysis':
+                                messages.append(f"⚡ {status_target['name']} 被{effect_display_name}了，持续 {effect_turns} 回合")
+                            elif effect_type == 'buff':
+                                messages.append(f"✨ {status_target['name']} 获得了 {effect_display_name}({effect_value}) 效果，持续 {effect_turns} 回合")
+                            else:
+                                messages.append(f"💀 {status_target['name']} 受到了 {effect_display_name}({effect_value}) 效果，持续 {effect_turns} 回合")
+        
         # 处理buff效果
         if 'buff' in effects:
             buff_info = effects['buff']
@@ -893,6 +1077,171 @@ class SkillEffect(ABC):
                         update_character_health(heal_target['id'], new_health)
                         messages.append(f"💚 {heal_target['name']} 恢复了 {actual_heal} 点生命值")
         
+        # 处理vampiric效果（吸血效果，将伤害转换为硬血而非治疗）
+        if 'vampiric' in effects:
+            vampiric_info = effects['vampiric']
+            # 吸血效果总是对攻击者生效
+            
+            # 计算基于伤害的硬血获得量
+            vampiric_amount = self._calculate_effect_amount(vampiric_info, main_effect_value, 'vampiric')
+            
+            if vampiric_amount > 0:
+                # 将伤害转换为硬血，而不是直接治疗
+                current_hardblood = get_hardblood_amount(attacker['id'])
+                new_hardblood = current_hardblood + vampiric_amount
+                
+                # 如果已有硬血，增加数量；如果没有，创建新的硬血状态
+                if current_hardblood > 0:
+                    # 更新现有硬血数量
+                    from character.status_effects import update_status_effect_intensity
+                    update_status_effect_intensity(attacker['id'], 'hardblood', new_hardblood)
+                else:
+                    # 添加新的硬血状态
+                    add_status_effect(attacker['id'], 'hardblood', '硬血', new_hardblood, 999)  # 硬血持续很久
+                
+                messages.append(f"🩸 {attacker['name']} 获得了 {vampiric_amount} 点硬血 (总共{new_hardblood}点)")
+
+        # 处理hardblood_shield效果（消耗硬血获得护盾）
+        if 'hardblood_shield' in effects:
+            shield_info = effects['hardblood_shield']
+            max_consume = shield_info.get('max_consume', 30)
+            shield_per_point = shield_info.get('shield_per_point', 5)
+            
+            # 计算要消耗的硬血数量
+            current_hardblood = get_hardblood_amount(attacker['id'])
+            actual_consume = min(current_hardblood, max_consume)
+            
+            if actual_consume > 0:
+                # 消耗硬血
+                consumed = consume_hardblood(attacker['id'], actual_consume)
+                
+                # 计算护盾值
+                shield_value = consumed * shield_per_point
+                
+                # 添加护盾状态效果
+                if shield_value > 0:
+                    add_status_effect(attacker['id'], 'buff', 'shield', shield_value, 999)
+                    messages.append(f"🩸 {attacker['name']} 消耗了 {consumed} 点硬血")
+                    messages.append(f"🛡️ 获得了 {shield_value} 点护盾")
+
+        # 处理aoe_apply_status效果（对所有敌方目标施加状态效果）
+        if 'aoe_apply_status' in effects:
+            aoe_status_list = effects['aoe_apply_status']
+            if isinstance(aoe_status_list, list):
+                # 获取所有敌方目标
+                from database.queries import get_characters_by_type
+                attacker_type = attacker.get('character_type', 'friendly')
+                enemy_type = 'enemy' if attacker_type == 'friendly' else 'friendly'
+                enemy_targets = get_characters_by_type(enemy_type, in_battle=True)
+                
+                for status_info in aoe_status_list:
+                    if not isinstance(status_info, dict):
+                        continue
+                    
+                    effect_name = status_info.get('effect', '')
+                    effect_value = status_info.get('value', 1)
+                    effect_turns = status_info.get('turns', 1)
+                    
+                    # 确定效果类型
+                    if effect_name in ['weak', 'vulnerable', 'burn', 'poison', 'rupture', 'bleeding', 'paralysis']:
+                        effect_type = 'debuff'
+                    elif effect_name in ['strong', 'breathing', 'guard', 'shield', 'haste']:
+                        effect_type = 'buff'
+                    else:
+                        effect_type = 'debuff'  # 默认为debuff
+                    
+                    # 对所有敌方目标施加状态效果
+                    for enemy_target in enemy_targets:
+                        if not enemy_target:
+                            continue
+                        
+                        success = add_status_effect(
+                            enemy_target['id'],
+                            effect_type,
+                            effect_name,
+                            effect_value,
+                            effect_turns
+                        )
+                        
+                        if success:
+                            effect_display_names = {
+                                'weak': '虚弱',
+                                'vulnerable': '易伤',
+                                'burn': '烧伤',
+                                'poison': '中毒',
+                                'rupture': '破裂',
+                                'bleeding': '流血',
+                                'paralysis': '麻痹',
+                                'strong': '强壮',
+                                'breathing': '呼吸法',
+                                'guard': '守护',
+                                'shield': '护盾',
+                                'haste': '加速'
+                            }
+                            
+                            effect_display_name = effect_display_names.get(effect_name, effect_name)
+                            
+                            if effect_type == 'buff':
+                                messages.append(f"✨ {enemy_target['name']} 获得了 {effect_display_name}({effect_value}) 效果，持续 {effect_turns} 回合")
+                            else:
+                                messages.append(f"💀 {enemy_target['name']} 受到了 {effect_display_name}({effect_value}) 效果，持续 {effect_turns} 回合")
+
+        # 处理apply_status效果（对攻击者自身施加状态效果）
+        if 'apply_status' in effects:
+            status_list = effects['apply_status']
+            if isinstance(status_list, list):
+                for status_info in status_list:
+                    if not isinstance(status_info, dict):
+                        continue
+                    
+                    effect_name = status_info.get('effect', '')
+                    effect_value = status_info.get('value', 1)
+                    effect_turns = status_info.get('turns', 1)
+                    
+                    # 确定效果类型
+                    if effect_name in ['weak', 'vulnerable', 'burn', 'poison', 'rupture', 'bleeding', 'paralysis']:
+                        effect_type = 'debuff'
+                    elif effect_name in ['strong', 'breathing', 'guard', 'shield', 'haste']:
+                        effect_type = 'buff'
+                    elif effect_name == 'weaken_aura':
+                        effect_type = 'special'  # 特殊效果类型
+                    else:
+                        effect_type = 'buff'  # 默认为buff
+                    
+                    success = add_status_effect(
+                        attacker['id'],
+                        effect_type,
+                        effect_name,
+                        effect_value,
+                        effect_turns
+                    )
+                    
+                    if success:
+                        effect_display_names = {
+                            'weak': '虚弱',
+                            'vulnerable': '易伤',
+                            'burn': '烧伤',
+                            'poison': '中毒',
+                            'rupture': '破裂',
+                            'bleeding': '流血',
+                            'paralysis': '麻痹',
+                            'strong': '强壮',
+                            'breathing': '呼吸法',
+                            'guard': '守护',
+                            'shield': '护盾',
+                            'haste': '加速',
+                            'weaken_aura': '削弱光环'
+                        }
+                        
+                        effect_display_name = effect_display_names.get(effect_name, effect_name)
+                        
+                        if effect_name == 'weaken_aura':
+                            messages.append(f"💜 {attacker['name']} 释放了{effect_display_name}，持续 {effect_turns} 回合")
+                        elif effect_type == 'buff':
+                            messages.append(f"✨ {attacker['name']} 获得了 {effect_display_name}({effect_value}) 效果，持续 {effect_turns} 回合")
+                        else:
+                            messages.append(f"💀 {attacker['name']} 受到了 {effect_display_name}({effect_value}) 效果，持续 {effect_turns} 回合")
+
         return messages
     
     def _calculate_effect_amount(self, effect_config, main_effect_value, effect_type):
@@ -997,13 +1346,14 @@ class SkillEffect(ABC):
             }
         
         # 使用新的高级伤害计算系统
-        final_damage, damage_details, dice_results_info = calculate_advanced_damage(skill_info, attacker, target)
+        final_damage, damage_details, dice_results_info, additional_messages = calculate_advanced_damage(skill_info, attacker, target)
         
         return {
             'total_damage': final_damage,
             'damage_details': damage_details,
             'damage_type': skill_info.get('damage_type', 'physical'),
-            'dice_results_info': dice_results_info  # 添加骰子结果信息
+            'dice_results_info': dice_results_info,  # 添加骰子结果信息
+            'additional_messages': additional_messages  # 添加额外消息（如硬血消耗）
         }
     
     def apply_self_effects(self, attacker, skill_info, skill_effect_value=0, effect_type='damage'):
@@ -1132,7 +1482,7 @@ class SkillEffect(ABC):
             if positive_coins > 0:
                 result = add_emotion_coins(
                     attacker['id'], 
-                    positive=positive_coins,
+                    positive_coins=positive_coins,
                     source=f"造成{damage_dealt}伤害" + ("并击杀目标" if target_died else "")
                 )
                 
@@ -1148,7 +1498,7 @@ class SkillEffect(ABC):
             if negative_coins > 0:
                 result = add_emotion_coins(
                     target['id'],
-                    negative=negative_coins,
+                    negative_coins=negative_coins,
                     source=f"受到{damage_dealt}伤害"
                 )
                 
@@ -1183,7 +1533,7 @@ class SkillEffect(ABC):
             
             result_healer = add_emotion_coins(
                 healer['id'], 
-                positive=positive_coins_healer,
+                positive_coins=positive_coins_healer,
                 source=f"治疗{healing_amount}点生命值"
             )
             
@@ -1200,7 +1550,7 @@ class SkillEffect(ABC):
                 
                 result_target = add_emotion_coins(
                     target['id'],
-                    positive=positive_coins_target,
+                    positive_coins=positive_coins_target,
                     source=f"接受{healing_amount}点治疗"
                 )
                 
@@ -1298,7 +1648,7 @@ class DefaultSkillEffect(SkillEffect):
         if condition == "self_has_dark_domain":
             # 检查攻击者是否有黑夜领域状态
             status_effects = get_character_status_effects(attacker['id'])
-            return any(effect.get('name') == '黑夜领域' for effect in status_effects)
+            return any(effect.effect_name == '黑夜领域' for effect in status_effects)
         
         # 可以添加其他条件
         return False

@@ -62,8 +62,8 @@ async def help_command(update: Update, context: CallbackContext) -> None:
 /show, /panel - 查看角色详情
 /race <角色名> - 管理角色种族和抗性
 /health - 修改角色生命值
-/reset - 重置角色状态
-/reset_all - 重置所有角色状态
+/reset - 重置角色状态（包括情感系统）
+/reset_all - 重置所有角色状态（包括情感系统）
 
 🎭 人格系统:
 /create_core <角色名> - 创建核心角色（珏、露、莹、笙、曦）
@@ -72,7 +72,7 @@ async def help_command(update: Update, context: CallbackContext) -> None:
 
 ⚔️ 战斗系统:
 /attack - 友方攻击/治疗
-/enemy_attack - 敌方攻击/治疗
+/enemy - 敌方攻击/治疗
 /battle - 查看战斗状态
 /join <角色名> - 角色加入战斗
 /join <角色1> <角色2> ... - 批量加入多个角色

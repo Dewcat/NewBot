@@ -91,13 +91,21 @@ async def select_attacker(update: Update, context: CallbackContext) -> int:
                 skill_text = f"🔒 {skill['name']} (冷却中: {cooldown_remaining}次行动)"
                 # 冷却中的技能不可选择
                 continue
-            else:
-                skill_text = f"{skill['name']}"
-                
-                # 只添加伤害公式，不添加效果描述
-                damage_formula = skill_info.get('damage_formula', '')
-                if damage_formula:
-                    skill_text += f" ({damage_formula})"
+            
+            # 检查技能的情感等级要求
+            from character.emotion_system import check_skill_emotion_requirement
+            can_use, error_msg = check_skill_emotion_requirement(attacker_id, skill_info)
+            if not can_use:
+                skill_text = f"🚫 {skill['name']} (需要情感等级{skill_info.get('required_emotion_level', 0)}级)"
+                # 情感等级不足的技能不可选择
+                continue
+            
+            skill_text = f"{skill['name']}"
+            
+            # 只添加伤害公式，不添加效果描述
+            damage_formula = skill_info.get('damage_formula', '')
+            if damage_formula:
+                skill_text += f" ({damage_formula})"
                 
                 # 根据技能类型添加简单的图标标识
                 skill_category = skill_info.get('skill_category', 'damage')
@@ -556,6 +564,12 @@ async def enemy_select_attacker(update: Update, context: CallbackContext) -> int
         # 获取技能详细信息
         skill_info = get_skill(skill['id'])
         if skill_info:
+            # 检查技能的情感等级要求
+            from character.emotion_system import check_skill_emotion_requirement
+            can_use, error_msg = check_skill_emotion_requirement(attacker_id, skill_info)
+            if not can_use:
+                continue  # 跳过情感等级不足的技能
+            
             available_skills.append({
                 'index': skill_index,
                 'skill': skill,
@@ -836,7 +850,7 @@ async def cancel_enemy_attack(update: Update, context: CallbackContext) -> int:
 def get_enemy_attack_conv_handler():
     """获取敌方攻击会话处理器"""
     return ConversationHandler(
-        entry_points=[CommandHandler("enemy_attack", start_enemy_attack)],
+        entry_points=[CommandHandler("enemy", start_enemy_attack)],
         states={
             ENEMY_SELECTING_ATTACKER: [CallbackQueryHandler(enemy_select_attacker, pattern=r"^enemy_attacker_\d+$")],
             ENEMY_SELECTING_TARGET: [CallbackQueryHandler(enemy_select_target, pattern=r"^enemy_target_\d+$")],

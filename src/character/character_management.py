@@ -462,6 +462,7 @@ async def reset_all_characters_command(update: Update, context: CallbackContext)
             "• 清除技能冷却\n"
             "• 移出战斗\n"
             "• 清除状态效果\n"
+            "• 重置情感系统（等级、硬币、效果）\n"
             "🔄 回合计数器已重置到第1回合"
         )
     else:
@@ -642,7 +643,7 @@ async def show_help(update: Update, context: CallbackContext) -> None:
     help_text += "/leave <角色名称> - 将角色撤出战斗\n"
     help_text += "/health <角色名称> <数值> - 修改角色生命值\n"
     help_text += "/reset <角色名称> - 重置单个角色状态\n"
-    help_text += "/reset_all - 重置所有角色状态（满血+移出战斗+清除冷却+清除状态效果+重置回合）\n"
+    help_text += "/reset_all - 重置所有角色状态（满血+移出战斗+清除冷却+清除状态效果+重置情感系统+重置回合）\n"
     help_text += "/end_battle - 将所有角色移出战斗\n"
     help_text += "/battle - 查看当前战斗参与者\n\n"
     
