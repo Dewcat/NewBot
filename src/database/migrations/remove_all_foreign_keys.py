@@ -7,7 +7,7 @@ import os
 def remove_all_foreign_keys_and_cleanup():
     """移除所有外键约束并清理角色数据"""
     
-    db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'simplebot.db')
+    db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'dewbot.db')
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     

@@ -2,7 +2,7 @@
 
 ## 概述
 
-攻击逻辑是SimpleBot战斗系统的核心交互组件，负责处理玩家发起的攻击命令，包括友方攻击（`/attack`）和敌方攻击（`/enemy`）。系统采用对话式交互，通过Telegram的内联键盘引导用户完成攻击流程。
+攻击逻辑是Dewbot战斗系统的核心交互组件，负责处理玩家发起的攻击命令，包括友方攻击（`/attack`）和敌方攻击（`/enemy`）。系统采用对话式交互，通过Telegram的内联键盘引导用户完成攻击流程。
 
 ## 核心流程
 
@@ -48,12 +48,12 @@
    - 技能显示格式：`[技能名] ([伤害公式]) [图标]`
 
 **技能图标说明**：
-- ⚔️ 伤害技能
-- 💚 治疗技能
-- ✨ 增益技能
-- 💀 减益技能
-- 🧘 自我技能
-- 🌀 AOE技能
+- ⚔️ 伤害技能 (Damage)
+- 💚 治疗技能 (Healing)
+- ✨ 增益技能 (Buff)
+- 💀 减益技能 (Debuff)
+- 🧘 自我技能 (Self)
+- 🌀 AOE技能 (Area of Effect)
 
 #### 3. 处理技能选择 (`select_skill`)
 **功能**：处理用户选择的技能
@@ -101,11 +101,11 @@ is_aoe_skill = skill_category.startswith('aoe_')
 ```
 
 **状态图标**：
-- 💀 已死亡
-- 💚 80%+ 生命
-- 💛 50-79% 生命
-- 🧡 20-49% 生命
-- ❤️ <20% 生命
+- 💀 已死亡 (Dead)
+- 💚 80%+ 生命 (Healthy)
+- 💛 50-79% 生命 (Injured)
+- 🧡 20-49% 生命 (Wounded)
+- ❤️ <20% 生命 (Critical)
 
 #### 5. 处理目标选择 (`select_target`)
 **功能**：处理用户选择的目标并执行攻击
@@ -355,5 +355,13 @@ context.user_data = {
 ### 用户体验
 - 清晰的状态反馈
 - 直观的操作流程
-- 详细的错误提示</content>
-<parameter name="filePath">e:\PythonWorkspace\NewBot\ATTACK_LOGIC_DOCUMENTATION.md
+- 详细的错误提示
+
+## 战斗结束交互 (Combat Termination Interaction)
+
+虽然攻击逻辑主要处理单次行动，但攻击结果（如击杀最后一个敌人）可能触发战斗结束流程。
+
+*   **检查时机**：通常在 `execute_attack` 完成后，或者在回合结束检查时。
+*   **状态处理**：如果触发 **Stage End** 或 **Battle End**，系统将根据 `TURN_SYSTEM_DOCUMENTATION.md` 中定义的规则处理状态重置（如情感系统、混乱值等）。
+    *   **Stage End**：保留情感等级/硬币，移除所有战斗状态 (`in_battle = False`)，清除所有状态效果 (Buff/Debuff)，重置混乱值 (Stagger)。
+    *   **Battle End**：重置情感等级/硬币，移除所有战斗状态 (`in_battle = False`)，清除所有状态效果 (Buff/Debuff)，重置混乱值 (Stagger)。

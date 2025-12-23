@@ -7,7 +7,7 @@ import os
 
 def get_db_path():
     """获取数据库路径"""
-    return os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'simplebot.db')
+    return os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'dewbot.db')
 
 def upgrade():
     """升级数据库结构以支持情感系统"""

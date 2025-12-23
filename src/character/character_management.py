@@ -628,7 +628,7 @@ async def show_core_panel(update: Update, context: CallbackContext) -> None:
 
 async def show_help(update: Update, context: CallbackContext) -> None:
     """显示所有可用命令的帮助信息"""
-    help_text = "🤖 SimpleBot 命令列表:\n\n"
+    help_text = "🤖 Dewbot 命令列表:\n\n"
     
     help_text += "📝 角色管理命令:\n"
     help_text += "/cc, /create_character - 创建友方角色\n"

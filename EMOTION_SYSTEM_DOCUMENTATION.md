@@ -2,7 +2,7 @@
 
 ## 概述
 
-情感系统是SimpleBot角色养成的重要机制，通过战斗中的表现获得情感硬币，积累后可以提升情感等级，解锁更强大的技能和获得特殊效果。
+情感系统是Dewbot战斗中的**短期成长机制**，属于**战斗会话（Battle Session）**属性。角色通过在战斗中的表现获得情感硬币，提升情感等级，解锁更强大的技能和获得特殊效果。情感等级仅在当前战斗会话中有效，战斗结束后将重置，并非长期的RPG角色成长属性。
 
 ## 核心类：EmotionSystem
 
@@ -26,6 +26,10 @@ class EmotionSystem:
 ```
 
 ## 情感硬币系统
+
+### 硬币保留与重置规则
+*   **战斗结束 (Battle End)**：所有的情感硬币和情感等级都会**重置为 0**。
+*   **阶段结束 (Stage End)**：情感硬币和情感等级会被**保留**，延续到下一阶段的战斗中。
 
 ### 硬币获取来源
 
@@ -125,6 +129,7 @@ class EmotionSystem:
 #### 2. 情感效果（暂时禁用）
 - 从效果池中随机获得永久效果
 - 效果类型包括强壮、守护等
+- **注意**：当前代码中 `POSITIVE_EMOTION_EFFECTS` 和 `NEGATIVE_EMOTION_EFFECTS` 列表为空，因此升级时不会获得额外效果，仅获得冷却缩减。
 
 ## 情感效果应用
 
@@ -132,13 +137,13 @@ class EmotionSystem:
 **函数**：`apply_turn_start_emotion_effects(character_id)`
 
 **执行流程**：
-1. 查询角色的情感效果
+1. 查询角色的情感效果（从 `character_emotion_effects` 表）
 2. 为每个效果添加对应的状态效果
 3. 持续时间为1回合（每回合刷新）
 
 **支持效果**：
-- `strong`: 强壮状态
-- `guard`: 守护状态
+- `strong`: 强壮状态 (获得 `intensity` 层)
+- `guard`: 守护状态 (获得 `intensity` 层)
 
 ### 效果存储
 - 存储在 `character_emotion_effects` 表中

@@ -1,6 +1,6 @@
 <!-- Use this file to provide workspace-specific custom instructions to Copilot. For more details, visit https://code.visualstudio.com/docs/copilot/copilot-customization#_use-a-githubcopilotinstructionsmd-file -->
 
-# SimpleBot - Telegram RPG战斗机器人开发规范
+# Dewbot - Telegram RPG战斗机器人开发规范
 
 ## 项目架构概览
 
@@ -183,7 +183,7 @@ VALUES ('铁壁', 'self', '{"status": [{"effect": "guard", "turns": 5, "value": 
 
 ### 开发工作流
 1. **运行项目**: `cd src && python main.py`
-2. **数据库操作**: 直接使用`sqlite3 data/simplebot.db`
+2. **数据库操作**: 直接使用`sqlite3 data/dewbot.db`
 3. **添加新技能**: 更新skills表 + 在skill_effects.py中处理
 4. **添加新状态**: 在character/status_effects.py中定义处理逻辑
 
@@ -195,6 +195,6 @@ VALUES ('铁壁', 'self', '{"status": [{"effect": "guard", "turns": 5, "value": 
 - 错误日志使用Python logging模块
 
 ### 调试技巧
-- 查看技能数据：`sqlite3 data/simplebot.db "SELECT name, skill_category, effects FROM skills;"`
+- 查看技能数据：`sqlite3 data/dewbot.db "SELECT name, skill_category, effects FROM skills;"`
 - 重置角色状态：`/reset <角色名>`
 - 直接修改数据库：进入src目录后使用sqlite3命令

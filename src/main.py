@@ -45,14 +45,14 @@ application = Application.builder()\
 async def start(update: Update, context: CallbackContext) -> None:
     """机器人启动命令处理函数"""
     await update.message.reply_text(
-        'SimpleBot已启动，这是一个简化版的角色管理和战斗机器人。\n\n'
+        'Dewbot已启动，这是一个简化版的角色管理和战斗机器人。\n\n'
         '输入 /help 查看所有可用命令。'
     )
 
 async def help_command(update: Update, context: CallbackContext) -> None:
     """显示帮助信息"""
     help_text = """
-🤖 SimpleBot 快速帮助
+🤖 Dewbot 快速帮助
 
 📋 角色管理:
 /create_character, /cc - 添加新友方角色
@@ -110,7 +110,7 @@ async def help_command(update: Update, context: CallbackContext) -> None:
 - 基于主效果数值计算百分比效果
 - 例: 造成100伤害，次要治疗20% = 20点治疗
 
-🔰 完整功能说明请查看: SIMPLEBOT_MANUAL.md
+🔰 完整功能说明请查看: DEWBOT_MANUAL.md
 包含详细的系统架构、数据库结构、高级功能等说明
     """
     await update.message.reply_text(help_text)

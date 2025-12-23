@@ -2,7 +2,7 @@
 
 ## 概述
 
-技能系统是SimpleBot战斗系统的核心组件之一，负责处理各种类型的技能效果、伤害计算和状态应用。系统采用模块化设计，支持多种技能类型和复杂的伤害计算公式。
+技能系统是Dewbot战斗系统的核心组件之一，负责处理各种类型的技能效果、伤害计算和状态应用。系统采用模块化设计，支持多种技能类型和复杂的伤害计算公式。
 
 ## 核心类：SkillEffect
 
@@ -24,6 +24,40 @@ class SkillEffect(ABC):
 
 #### 1. 伤害技能 (damage)
 **功能**：对目标造成伤害
+
+**详细计算公式**：
+
+最终伤害计算遵循以下流水线：
+
+1.  **基础伤害 (Base Damage)**:
+    *   `Dice Roll` (骰子结果) + `Fixed Value` (固定值)
+    *   *注意：若攻击者处于麻痹状态，每个麻痹层数会使一个骰子结果归零。*
+
+2.  **追加伤害 (Additional Damage)**:
+    *   来自技能特效（如硬血消耗、条件增伤）。
+    *   `Total Base Damage` = `Base Damage` + `Additional Damage`
+
+3.  **攻防修正 (Attack/Defense Modifier)**:
+    *   `Modifier` = `Attacker.Attack` / `Target.Defense`
+
+4.  **种族特攻 (Race Bonus)**:
+    *   若技能有 `special_damage_tags` 且命中对应种族。
+    *   `Bonus` = `Tag Multiplier` (例如 1.5 或 2.0)
+
+5.  **抗性减免 (Resistance Reduction)**:
+    *   根据伤害类型 ('physical'/'magic') 读取目标抗性。
+    *   `Reduction` = `1.0 - min(Target.Resistance, 0.9)`
+    *   *即最多减伤 90%，最少造成 10% 伤害。*
+
+6.  **混乱加成 (Stagger Multiplier)**:
+    *   若目标处于混乱状态。
+    *   `Multiplier` = `2.0`
+
+**最终公式**:
+$$
+FinalDamage = TotalBase \times \frac{Atk}{Def} \times RaceBonus \times ResistanceReduction \times StaggerMultiplier
+$$
+*(结果向下取整，且最小为 1)*
 
 **执行流程**：
 1. **计算基础伤害**
@@ -150,6 +184,7 @@ def calculate_resistance_reduction(damage_type, target_resistances):
 #### 4. 混乱状态加成
 - 混乱状态下伤害提升至200%
 - 通过 `stagger_manager.get_stagger_damage_multiplier()` 计算
+- **重置规则**：混乱值和混乱状态会在“阶段结束 (Stage End)”和“战斗结束 (Battle End)”时重置。
 
 ### 最终伤害公式
 ```
@@ -163,13 +198,48 @@ def calculate_resistance_reduction(damage_type, target_resistances):
 
 ## 状态效果应用
 
-### 技能状态效果
+### 技能状态效果详解
+
 **函数**：`apply_skill_status_effects(attacker, target, skill_info, main_effect_value)`
 
-**支持效果类型**：
-- **buff**: 强壮、呼吸法、守护、护盾、加速等
-- **debuff**: 虚弱、易伤、烧伤、中毒、破裂、流血、麻痹等
-- **special**: 硬血、黑夜领域、削弱光环等
+#### 1. 增益效果 (Buffs)
+
+| 效果名称 | 代码标识 | 图标 | 效果描述 | 持续/衰减机制 |
+| :--- | :--- | :--- | :--- | :--- |
+| **强壮** | `strong` | 💪 | 攻击造成的最终伤害增加 `强度 × 10%`。 | 回合结束时持续时间 -1。 |
+| **呼吸法** | `breathing` | 🫁 | 暴击率增加 `强度%`。若因此触发暴击，造成 120% 伤害。 | 回合结束时持续时间 -1。 |
+| **守护** | `guard` | ☂ | 受到的最终伤害减少 `强度 × 10%`。 | 回合结束时持续时间 -1。 |
+| **护盾** | `shield` | 🛡️ | 抵挡等同于强度的伤害。抵挡后强度减少。 | 持续时间不随回合减少，直到强度耗尽或被驱散。 |
+| **加速** | `haste` | 🚀 | 立即增加 1 点当前行动次数和每回合行动上限。 | 回合结束时持续时间 -1。效果结束时扣除增加的上限。 |
+
+#### 2. 减益效果 (Debuffs)
+
+| 效果名称 | 代码标识 | 图标 | 效果描述 | 持续/衰减机制 |
+| :--- | :--- | :--- | :--- | :--- |
+| **烧伤** | `burn` | 🔥 | 回合结束时受到 `强度 × 1` 点伤害。 | 回合结束时持续时间 -1。 |
+| **中毒** | `poison` | ☠️ | 回合结束时受到 `当前生命值 × 强度%` 点伤害 (最少1点)。 | 回合结束时持续时间 -1。 |
+| **破裂** | `rupture` | 💥 | 受到攻击时，额外受到 `强度 × 1` 点伤害。 | 每次触发后持续时间 -1 (不随回合自动减少)。 |
+| **流血** | `bleeding` | 🩸 | 每次行动后，受到 `强度 × 1` 点伤害。 | 每次触发后持续时间 -1 (不随回合自动减少)。 |
+| **虚弱** | `weak` | 😵 | 攻击造成的最终伤害减少 `强度 × 10%`。 | 回合结束时持续时间 -1。 |
+| **易伤** | `vulnerable` | 💔 | 受到的最终伤害增加 `强度 × 10%`。 | 回合结束时持续时间 -1。 |
+| **麻痹** | `paralysis` | ⚡ | 投掷伤害骰子时，`min(骰子数, 麻痹层数)` 个骰子结果归零。 | 每次归零骰子后，层数(强度)相应减少 (不随回合自动减少)。 |
+
+#### 3. 其他效果 (Other Effects)
+
+| 效果名称 | 代码标识 | 效果描述 |
+| :--- | :--- | :--- |
+| **冷却缩减** | `cooldown_reduction` | **立即**减少所有处于冷却中技能的冷却时间 `intensity` 回合。若冷却归零，技能立即可用。 |
+| **吸血** | `vampiric` | 将造成伤害的 `percentage`% 转化为**硬血** (Hardblood) 而非直接治疗。 |
+| **自我伤害** | `self_damage` | 施法者受到 `amount` 或 `percentage`% 效果值的反噬伤害。 |
+| **自我治疗** | `self_heal` | 施法者恢复 `amount` 或 `percentage`% 效果值的生命值。 |
+
+#### 4. 特殊效果 (Special Effects)
+
+| 效果名称 | 代码标识 | 图标 | 效果描述 | 机制 |
+| :--- | :--- | :--- | :--- | :--- |
+| **硬血** | `hardblood` | 🩸 | 特殊资源池，可被特定技能消耗以增强伤害、获得护盾或增强AOE。 | 持续时间无限，仅通过消耗减少。 |
+| **黑夜领域** | `dark_domain` | 🌑 | 1. **回合结束时**：获得 6级强壮(1回合)、6级易伤(1回合)、1级加速(下回合)、666点负面情感硬币。<br>2. **死亡免疫**：免疫一次致死伤害（触发后移除领域，HP变为1）。<br>3. **条件增伤**：增强特定技能伤害。 | 持续 3 回合，回合结束时持续时间 -1。 |
+| **削弱光环** | `weaken_aura` | 💜 | **回合结束时**：对所有敌方施加 5级虚弱(1回合) 和 5级易伤(1回合)。 | 持续 5 回合 (注: 当前代码实现中暂无自动衰减)。 |
 
 **效果配置格式**：
 ```json
@@ -183,6 +253,12 @@ def calculate_resistance_reduction(damage_type, target_resistances):
     "type": "poison",
     "intensity": 2,
     "duration": 2
+  },
+  "vampiric": {
+    "percentage": 50
+  },
+  "self_damage": {
+    "percentage": 10
   }
 }
 ```

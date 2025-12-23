@@ -8,7 +8,7 @@ import logging
 def remove_battle_logs_foreign_keys():
     """移除battle_logs表的外键约束"""
     
-    db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'simplebot.db')
+    db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'dewbot.db')
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
