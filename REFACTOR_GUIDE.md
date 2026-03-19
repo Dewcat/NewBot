@@ -77,6 +77,7 @@
 | `emotion_level` | INTEGER | 当前情感等级 (由情感系统管理) | 0 |
 | `emotion_coins` | INTEGER | 当前情感硬币 (由情感系统管理) | 0 |
 | `tags` | TEXT | 特性标签, JSON 数组格式 (目前主要标签: "人类", "机械", "异想体") | `["人类", "异想体"]` |
+| `ego_skill_id` | INTEGER | (核心角色专属)绑定的EGO技能ID | 301 |
 | `is_in_battle` | BOOLEAN | 是否在战斗中 | `True` |
 
 #### 1.2.2 `personas` 表
@@ -116,7 +117,7 @@ class CharacterManager:
         根据 ID 获取角色对象。
         - 伪代码:
           1. 从 `characters` 表查询数据。
-          2. 如果是核心角色，额外查询 `personas` 表获取当前人格信息。
+          2. 如果是核心角色，额外查询 `personas` 表获取当前人格信息，并将当前人格的普通技能与该角色绑定的 EGO 技能合并。
           3. 将数据库行数据转换为 Character 对象。
         """
         pass
@@ -210,6 +211,8 @@ class CharacterManager:
 
 技能及其行为数据可以存储在数据库中，也可以作为配置文件（如 JSON或YAML）加载，后者更便于迭代和版本控制。此处我们以数据库表结构为例。
 
+值得注意的是，针对5名核心角色（珏、露、莹、笙、曦），我们引入了 **EGO技能** 概念。
+
 #### 2.2.1 `skills` 表
 
 存储技能的基础信息。
@@ -221,6 +224,12 @@ class CharacterManager:
 | `description`| TEXT | 技能描述 | "对单个敌人造成火焰伤害" |
 | `base_cooldown`| INTEGER | 基础冷却回合数 | 3 |
 | `emotion_req`| INTEGER | 情感等级要求 | 1 |
+| `skill_type` | TEXT | 技能类型: `NORMAL` 或 `EGO` | "NORMAL" |
+
+**关于 EGO 技能 (`skill_type` = 'EGO')**:
+1. EGO技能完全与角色绑定，不会根据角色人格(Persona)变化而被增加或移除。
+2. 相比普通技能，EGO技能异常强大，因此具备极高的情感等级要求 (`emotion_req`)。
+3. **重要限制**：EGO技能每场战斗只许施放一次。一旦使用，其冷却时间将被设置为一个特殊值（或直接标记为不可用），直到下一次战斗开始重置。
 
 #### 2.2.2 `skill_behaviors` 表
 
@@ -231,8 +240,9 @@ class CharacterManager:
 | `id` | INTEGER | 主键，行为唯一标识符 | 301 |
 | `skill_id` | INTEGER | 所属技能ID, 外键关联 `skills` 表 | 201 |
 | `timing` | TEXT | 作用时机 (`PRE`, `ON`, `POST`) | "ON" |
-| `target_type`| TEXT | 目标类型 (`SELF`, `SELECT_ENEMY`, `SELECT_FRIEND`, `ALL_ENEMIES`, `ALL_FRIENDS`, `RANDOM_ENEMIES`, `RANDOM_FRIENDS`) | "SELECT_ENEMY" |
-| `random_count`| INTEGER | (仅 `RANDOM_*` 类型使用) 随机选择的目标数量 | 2 |
+| `target_scope`| TEXT | 目标范围 (`SELF`, `FRIENDLY`, `ENEMY`, `ALL`) | "ENEMY" |
+| `target_method`| TEXT | 目标选择方式 (`SELF`, `SELECT_TARGET`, `ALL_TARGETS`, `RANDOM`) | "SELECT_TARGET" |
+| `target_param`| INTEGER | 方式的附加参数 (如 `RANDOM` 方式的 X 值) | null |
 | `effect_type`| TEXT | 效果种类 (`DAMAGE`, `HEAL`, `APPLY_EFFECT`, `SPECIAL`) | "DAMAGE" |
 | `effect_value`| TEXT | 效果数值 (骰子公式, 状态效果名称等) | "2d6+3" |
 | `effect_params`| TEXT | 效果额外参数 (JSON格式), 如状态效果强度/层数 | `{"type": "BURN", "intensity": 2, "stacks": 1}` |
@@ -240,13 +250,13 @@ class CharacterManager:
 
 #### 2.2.3 `battle_skill_cooldowns` 表
 
-在战斗中动态跟踪每个角色技能的冷却状态。
+在战斗中动态跟踪每个角色技能的冷却状态及EGO技能的使用情况。
 
 | 字段名 | 类型 | 描述 | 示例 |
 | :--- | :--- | :--- | :--- |
 | `character_id`| INTEGER | 角色ID | 1 |
 | `skill_id` | INTEGER | 技能ID | 201 |
-| `cooldown` | INTEGER | 剩余冷却回合 | 2 |
+| `cooldown` | INTEGER | 剩余冷却回合 (如果该技能为 EGO 技能，使用后可将此值设为特殊值如 -1 或 999 标记本局已用) | 2 |
 
 #### 2.2.4 骰子公式系统
 
@@ -306,16 +316,19 @@ class SkillManager:
         """
         执行一个完整的技能流程。
         - 伪代码:
-          1. 检查技能冷却和情感等级要求。
-          2. 获取技能的完整定义。
-          3. 初始化战斗播报构建器 (ReportBuilder)。
-          4. 按顺序执行 PRE-timing 行为。
-          5. 按顺序执行 ON-timing 行为 (必须存在)。
-          6. 按顺序执行 POST-timing 行为。
-          7. 设置技能冷却。
-          8. 消耗使用者行动次数。
-          9. 触发使用者的行动后效果（如流血状态）。
-          10. 返回构建好的单一战斗播报文本。
+          1. 获取技能的完整定义。
+          2. 检查技能是否为 EGO 技能 (`skill_type` == 'EGO'):
+             a. 检查该角色在本场战斗中是否已经使用过该技能（或任何EGO技能）。
+             b. 检查情感等级要求。
+          3. 否则检查普通技能冷却和情感等级要求。
+          4. 初始化战斗播报构建器 (ReportBuilder)。
+          5. 按顺序执行 PRE-timing 行为。
+          6. 按顺序执行 ON-timing 行为 (必须存在)。
+          7. 按顺序执行 POST-timing 行为。
+          8. 设置技能冷却。（如果 `skill_type` == 'EGO'，则标记本场战斗已使用）。
+          9. 消耗使用者行动次数。
+          10. 触发使用者的行动后效果（如流血状态）。
+          11. 返回构建好的单一战斗播报文本。
         """
         pass
 
@@ -329,7 +342,7 @@ class SkillManager:
           4. 将每个行为的执行结果添加到 report_builder。
         - 播报格式示例:
           [角色名] 使用了 [技能名]：
-          [角色名] 增加 2层 强壮
+          [角色名] 获得 2级 强壮
           [目标1] 受到 3d5=2+3+1=6点伤害
           [目标1] 受到 3 破裂伤害 (常规效果独立结算)
           [目标2] 受到 3d5=1+4+2=7点伤害
@@ -338,17 +351,20 @@ class SkillManager:
         """
         pass
 
-    def _resolve_targets(self, user: Character, target_type: str, primary_target: Character, random_count: int = 1) -> list[Character]:
+    def _resolve_targets(self, user: Character, target_scope: str, target_method: str, primary_target: Character, target_param: int = None) -> list[Character]:
         """
-        根据目标类型解析出所有受影响的角色。
+        根据目标范围和方式解析出所有受影响的角色。
         - 伪代码:
-          1. 使用 switch/case 或字典映射处理 `target_type`。
-          2. 'SELF': 返回 [user]。
-          3. 'SELECT_ENEMY', 'SELECT_FRIEND': 返回 [primary_target]。 (UI交互时已指定)
-          4. 'ALL_ENEMIES': 查询并返回所有存活的敌方角色。
-          5. 'ALL_FRIENDS': 查询并返回所有存活的友方角色。
-          6. 'RANDOM_ENEMIES': 从所有存活敌方中随机选择 `random_count` 个目标 (可重复/不可重复由实现决定)。
-          7. 'RANDOM_FRIENDS': 从所有存活友方中随机选择 `random_count` 个目标。
+          1. 确定目标池 (`target_scope`): 
+             - 'SELF': [user]
+             - 'FRIENDLY': 所有存活的友方角色
+             - 'ENEMY': 所有存活的敌方角色
+             - 'ALL': 所有存活的友方和敌方角色
+          2. 从目标池中按方式 (`target_method`) 选择:
+             - 'SELF': 从'自身'池中选择自己（仅对'自身'范围有效）。
+             - 'SELECT_TARGET': 返回 [primary_target]。 (UI交互时已从对应范围池中指定)。
+             - 'ALL_TARGETS': 返回池中所有角色。
+             - 'RANDOM': 从池中随机选择 `target_param` (X) 个目标 (可重复/不可重复由实现决定，即广域乱射:X)。
         """
         pass
 
@@ -366,6 +382,10 @@ class SkillManager:
     def reduce_cooldown(self, character_id: int, skill_id: int, amount: int):
         """
         减少指定技能的冷却时间。
+        - 伪代码:
+          1. 检查技能是否为 EGO 技能 (`skill_type` == 'EGO')。
+          2. 如果是 EGO 技能，忽略冷却缩减 (EGO 技能冷却不受普通缩减影响)。
+          3. 如果为普通技能，正常减少冷却时间并在 0 处截断。
         """
         pass
 ```
@@ -590,25 +610,26 @@ class StatusEffectManager:
 
 #### 情感等级阈值
 
-| 等级 | 所需总硬币数 | 升级奖励 |
-| :--- | :--- | :--- |
-| 0→1 | 3 | 所有技能冷却-1 |
-| 1→2 | 3 | 所有技能冷却-1 |
-| 2→3 | 5 | 所有技能冷却-1 |
-| 3→4 | 7 | 所有技能冷却-1 + **额外行动次数+1**（临时） |
-| 4→5 | 9 | 所有技能冷却-1 |
+| 等级 | 所需总硬币数 | 基础升级奖励 | 额外收益 (核心角色限定) |
+| :--- | :--- | :--- | :--- |
+| 0→1 | 3 | 所有技能冷却-1 | 抽取异想体书页 |
+| 1→2 | 3 | 所有技能冷却-1 | 抽取异想体书页 |
+| 2→3 | 5 | 所有技能冷却-1 | 抽取异想体书页 |
+| 3→4 | 7 | 所有技能冷却-1 + 本场战斗最高行动力+1（临时）| 抽取异想体书页 |
+| 4→5 | 9 | 所有技能冷却-1 | 抽取异想体书页 |
 
 **注意**：
 - 等级4的额外行动次数是临时的，会在战斗结束时移除
-- Stage End 保留情感等级和硬币
-- Battle End 重置情感等级和硬币为0
+- Stage End 保留情感等级和硬币以及已选的异想体书页
+- Battle End 重置情感等级和硬币为0，并彻底重置所有的书页状态
 
 #### 主要职责
 
 - **硬币管理**：根据战斗事件（如骰子结果、造成伤害、击杀敌人）为角色增减情感硬币。
 - **等级提升**：当硬币达到升级阈值时，自动提升角色的情感等级。
-- **升级效果处理**：执行升级带来的效果，主要是为角色的所有技能缩减冷却时间。
-- **状态重置**：在 Stage End 和 Battle End 时，根据规则保留或重置角色的情感等级和硬币。
+- **异想体书页抽取**：当核心角色升级时，根据正/负硬币的占比，从书页池中抽取“觉醒型”或“崩溃型”书页供玩家3选1。
+- **升级效果处理**：执行升级带来的效果，主要是为角色的所有技能缩减冷却时间，以及应用书页效果。
+- **状态重置**：在 Stage End 和 Battle End 时，根据规则保留或重置角色的情感等级、硬币及书页。
 - **日志记录**：记录所有硬币获取和等级提升的事件，便于调试和追溯。
 
 ### 4.2 数据结构 / 数据库设计
@@ -624,6 +645,7 @@ class StatusEffectManager:
 | `negative_emotion_coins` | INTEGER | 负面情感硬币数量 | 2 |
 | `pending_emotion_upgrade` | INTEGER | 待升级标志 (0/1) | 0 |
 | `emotion_bonus_actions` | INTEGER | 情感系统提供的临时额外行动次数 (战斗结束重置) | 1 |
+| `active_abnormality_pages`| TEXT | 角色当前激活的异想体书页ID列表 (JSON) | `[101, 105]` |
 
 #### 4.2.1 `emotion_log` 表
 
@@ -638,6 +660,33 @@ class StatusEffectManager:
 | `negative_coins` | INTEGER | 负面硬币变化量 | 1 |
 | `reason` | TEXT | 事件原因 (e.g., "DICE_MAX", "DICE_MIN", "DEAL_DAMAGE") | "DICE_MAX" |
 | `timestamp` | DATETIME | 事件发生时间 | `2023-10-27 10:00:00` |
+
+#### 4.2.2 异想体书页池相关表 (Abnormality Pages)
+
+支持玩家“战前配置异想体，战斗中抽取书页”的核心系统表。
+
+##### `abnormalities` 表 (异想体定义)
+| 字段名 | 类型 | 描述 |
+| :--- | :--- | :--- |
+| `id` | INTEGER | 主键 |
+| `name` | TEXT | 异想体名称 (例如: "焦化少女") |
+
+##### `abnormality_pages` 表 (书页定义)
+| 字段名 | 类型 | 描述 | 示例 |
+| :--- | :--- | :--- | :--- |
+| `id` | INTEGER | 主键 | 101 |
+| `abnormality_id` | INTEGER | 外键，关联 `abnormalities` | 1 |
+| `name` | TEXT | 书页名称 | "火柴" |
+| `type` | TEXT | 书页类型: `AWAKENING` (觉醒) / `BREAKDOWN` (崩溃) | "AWAKENING" |
+| `effect_description` | TEXT | 效果描述文本 | "造成伤害时附加1层烧伤" |
+| `special_effect_id` | TEXT | 关联到特殊效果扩展系统的处理标识 | "AB_PAGE_MATCHBOX" |
+
+##### `battle_page_pool` 表 (当前战斗的书页抽卡池)
+| 字段名 | 类型 | 描述 |
+| :--- | :--- | :--- |
+| `id` | INTEGER | 主键 |
+| `page_id` | INTEGER | 外键，关联 `abnormality_pages` |
+| `status` | TEXT | 状态: `AVAILABLE` (在池中), `USED` (已被选取) |
 
 ### 4.3 核心函数 / API 设计
 
@@ -702,16 +751,42 @@ class EmotionManager:
         """
         pass
 
-    def _apply_level_up_bonus(self, character_id: int, new_level: int):
+    def _draw_abnormality_pages(self, character_id: int, positive_coins: int, negative_coins: int):
+        """
+        （核心角色专属）从战斗卡池中抽取异想体书页，触发抽取界面。
+        - 伪代码:
+          1. 查询角色是否为核心角色 (is_core == True)，若否，则跳过。
+          2. 从 `battle_page_pool` 表中获取状态为 `AVAILABLE` 的书页。
+          3. 如果可用书页为空，通知跳过抽取。
+          4. 根据硬币比例决定抽取类型: 
+             如果 positive_coins >= negative_coins，优先抽取 `AWAKENING` (觉醒型)；否则优先抽取 `BREAKDOWN` (崩溃型)。
+          5. 随机抽取至多 3 张符合条件的书页。
+          6. 将抽取结果打包并触发 UI 交互 (如通过 Bot 发送书页选择键盘)。
+        """
+        pass
+
+    def apply_abnormality_page(self, character_id: int, page_id: int):
+        """
+        处理玩家在 UI 中选定的异想体书页。
+        - 伪代码:
+          1. 验证目标书页确实在当前待选的列表中。
+          2. 将 `battle_page_pool` 中该书页的 `status` 标记为 `USED`。
+          3. 将 `page_id` 添加到角色的 `active_abnormality_pages` 列表中。
+          4. 执行书页的即时/被动效果 (通过对接 `SpecialEffectManager`)。
+        """
+        pass
+
+    def _apply_level_up_bonus(self, character_id: int, new_level: int, positive_coins: int, negative_coins: int):
         """
         应用升级后的奖励。
         - 伪代码:
-          1. 【通用奖励】对所有技能减少1回合冷却时间。
+          1. 【通用奖励】对所有技能减少1回合冷却时间 (忽略EGO技能)。
           2. 【等级特定奖励】检查 EMOTION_LEVEL_BONUSES[new_level]:
              - 如果包含 'bonus_actions'，则:
                a. 增加角色的 `emotion_bonus_actions` 字段。
                b. 同时增加角色的 `current_actions` 和 `max_actions`。
-               c. 这个额外行动次数是临时的，会在战斗结束时随情感重置而移除。
+               c. 这个临时额外行动次数会在战斗结束时移除。
+          3. 【核心角色独立奖励】调用 `_draw_abnormality_pages` 进行异想体书页抽取。
         """
         pass
     
@@ -726,13 +801,15 @@ class EmotionManager:
 
     def reset_for_battle_end(self):
         """
-        战斗结束时重置所有角色的情感状态。
+        战斗结束时重置所有角色的情感状态及异想体书页系统。
         - 伪代码:
           1. 对所有角色:
              a. 将 `emotion_level`, `positive_emotion_coins`, `negative_emotion_coins` 更新为 0。
              b. 将 `pending_emotion_upgrade` 更新为 0。
              c. 将 `emotion_bonus_actions` 产生的额外行动次数从 `max_actions` 中扣除。
              d. 将 `emotion_bonus_actions` 更新为 0。
+             e. 清空 `active_abnormality_pages` 列表。
+          2. 重置 `battle_page_pool` (清空该表)。
         """
         pass
 ```
@@ -752,9 +829,10 @@ class EmotionManager:
 
 ### 4.5 用户接口 (Telegram 命令)
 
-情感系统是自动运行的，没有直接的用户命令。其状态通过 `/show <character_name>` 命令展示。
+情感系统是自动运行的，没有直接的用户命令。其状态通过 `/show <character_name>` 命令展示。书页的选择界面会在情感升级时由机器人以交互式选项（如 Inline Keyboard）自动弹出。
 
 - `/emotion_log <character_name>`: (管理命令) 显示指定角色的情感事件历史记录。
+- `/equip_abnormality <character_name> <abnormality_id>`: (战前命令) 为核心角色配备一个异想体（将其书页洗入备用池中）。
 
 ---
 ## 5. 回合管理系统 (Turn Management System)
@@ -839,7 +917,7 @@ class TurnManager:
           3. 调用 `effect_manager.clear_all_effects_on_battle_end()`。
           4. 调用 `emotion_manager.reset_for_battle_end()`。
           5. 将所有角色的 `is_in_battle` 设为 `False`。
-          6. 清理战斗相关的所有临时数据。
+          6. 清理战斗相关的所有临时数据 (包括清空 `battle_skill_cooldowns` 表，重置核心角色 EGO 技能的使用状态)。
         """
         pass
 
@@ -934,11 +1012,12 @@ class AttackConversation:
         处理用户选择攻击者的回调。
         - 伪代码:
           1. 从回调数据中获取 `attacker_id` 并存入 `context.user_data`。
-          2. 查询该角色所有可用的技能（满足情感要求、不在冷却中）。
-          3. 如果没有可用技能，提示用户并结束会话。
-          4. 生成技能选择的内联键盘。
-          5. 编辑原消息，要求用户选择技能。
-          6. 设置会话状态为 SELECTING_TARGET。
+          2. 根据角色的人格(如果有)获取其普通技能，并无视人格获取其专属EGO技能，合并作为技能池。
+          3. 查询该角色所有可用的技能（满足情感要求、不在冷却中，若为EGO技能则检查本场是否已使用）。
+          4. 如果没有可用技能，提示用户并结束会话。
+          5. 生成技能选择的内联键盘。
+          6. 编辑原消息，要求用户选择技能。
+          7. 设置会话状态为 SELECTING_TARGET。
         """
         pass
 
@@ -947,12 +1026,12 @@ class AttackConversation:
         处理用户选择技能的回调。
         - 伪代码:
           1. 从回调数据中获取 `skill_id` 并存入 `context.user_data`。
-          2. 获取技能定义，检查其 `target_type`。
-          3. 如果是 'SELF', 'ALL_ENEMIES', 'ALL_FRIENDS', 'RANDOM' 等无需指定目标的类型:
+          2. 获取技能定义，检查其行为中的 `target_method`。
+          3. 如果所有行为都是 'SELF', 'ALL_TARGETS', 'RANDOM' 等无需指定具体目标的类型:
              a. 调用 `_execute_and_report()` 执行技能 (primary_target_id=None)。
              b. 结束会话 (ConversationHandler.END)。
-          4. 如果需要选择目标 ('SELECT_ENEMY', 'SELECT_FRIEND'):
-             a. 查询所有合法的目标角色。
+          4. 如果有行为需要选择目标 ('SELECT_TARGET'):
+             a. 根据该行为的 `target_scope` ('FRIENDLY', 'ENEMY', 'ALL') 查询所有合法的目标角色。
              b. 生成目标选择的内联键盘。
              c. 编辑原消息，要求用户选择目标。
              d. 返回当前状态，等待目标选择。
@@ -966,7 +1045,7 @@ class AttackConversation:
           1. 从回调数据中获取 `target_id` (如果适用)。
           2. 从 `context.user_data` 中集齐 `attacker_id`, `skill_id`, `target_id`。
           3. 调用 `skill_manager.execute_skill(attacker_id, skill_id, primary_target_id=target_id)`。
-             - 注意：无论技能包含多少个行为，只要涉及 'SELECT_ENEMY'/'SELECT_FRIEND'，都使用此 target_id。
+             - 注意：无论技能包含多少个行为，只要涉及 'SELECT_TARGET'，都使用此 target_id。
           4. 获取技能执行结果的单一播报文本。
           5. 编辑原消息，显示战斗结果。
           6. 结束会话 (ConversationHandler.END)。
@@ -979,6 +1058,18 @@ class AttackConversation:
         """
         pass
 
+class EnemyAttackConversation:
+    def __init__(self, skill_manager, char_manager):
+        self.skill_manager = skill_manager
+        self.char_manager = char_manager
+
+    # 敌方攻击流程与友方类似，但有以下关键区别：
+    # 1. 权限控制：只有发起命令的用户可以操作界面 (通过 context.user_data['enemy_attack_initiator'] 验证)。
+    # 2. 角色池倒置：选择攻击者时从有行动次数的敌方角色中选择；目标选择池 (FRIENDLY/ENEMY) 的实际对象也会反转。
+    # 3. 技能匿踪机制：为了防止玩家直接看到敌方的详细技能名称和数值，在 select_skill 步骤生成技能键盘时：
+    #    - 按钮上的文本只显示“技能编号”（如“技能 1”、“技能 2”）。
+    #    - 技能的真实详情（名称、伤害公式等）仅在使用回调查询(CallbackQuery)的弹窗 (`answer_callback_query(text=..., show_alert=True)`) 中显示给发起者。
+
 # ConversationHandler setup
 # conv_handler = ConversationHandler(
 #     entry_points=[CommandHandler('attack', start)],
@@ -989,13 +1080,20 @@ class AttackConversation:
 #     },
 #     fallbacks=[CommandHandler('cancel', cancel)]
 # )
+#
+# enemy_conv_handler = ConversationHandler(
+#     entry_points=[CommandHandler('enemy', enemy_start)],
+#     states={ ... },
+#     fallbacks=[CommandHandler('cancel', enemy_cancel)],
+#     per_user=True  # 敌方攻击使用 per_user=True 保证会话隔离
+# )
 ```
 
 ### 6.4 模块交互
 
 - **与技能系统 (Skill System)**:
   - 这是攻击逻辑的最终执行者。本系统在收集完所有参数后，调用 `skill_manager.execute_skill()`。
-  - 在生成选项时，需要查询技能系统获取技能的定义（如 `target_type`）。
+  - 在生成选项时，需要查询技能系统获取技能的定义（如 `target_scope` 和 `target_method`）。
 
 - **与角色管理系统 (Character Management System)**:
   - 在流程的每一步都需要查询角色数据，例如：获取可选的攻击者列表、获取目标的存活状态等。
@@ -1006,7 +1104,7 @@ class AttackConversation:
 ### 6.5 用户接口 (Telegram 命令)
 
 - `/attack`: 启动友方角色的攻击流程。
-- `/enemy`: (可选) 启动敌方角色的攻击流程（逻辑类似，但初始角色和目标列表相反）。
+- `/enemy`: 启动敌方角色的攻击流程。敌方攻击必须在 `ConversationHandler` 层面使用 `per_user=True` 并包含发起者验证。选择敌方技能时只显示技能编号，通过弹窗机制让管理员/执行者查看详细技能。
 - `/cancel`: 在攻击流程中随时取消当前操作。
 
 ---
@@ -1216,7 +1314,7 @@ class DarkDomainEffect(SpecialEffectInterface):
                 "turn_end_effects": {
                     "STRENGTH": {"value": 6},  # 不使用强度/层数，直接指定数值
                     "VULNERABLE": {"value": 6},
-                    "HASTE": {"value": 1},  # 1级加速
+                    "BONUS_ACTIONS": {"value": 1},  # 1额外行动点
                     "emotion_coins": {"negative": 666}
                 }
             }
@@ -1242,9 +1340,9 @@ def process_dark_domain_turn_end(character_id, effect, battle_context):
         char = battle_context.char_manager.get_character(character_id)
         char.temp_damage_taken_multiplier = 1 + (value * 0.1)  # 6级=+60%受伤
     
-    # 应用加速(增加行动次数)
-    if "HASTE" in turn_effects:
-        value = turn_effects["HASTE"]["value"]
+    # 应用额外行动点(增加行动次数)
+    if "BONUS_ACTIONS" in turn_effects:
+        value = turn_effects["BONUS_ACTIONS"]["value"]
         battle_context.char_manager.add_bonus_actions(character_id, value)
     
     # 添加负面情感币
