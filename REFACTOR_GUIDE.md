@@ -48,7 +48,7 @@
 - **角色生命周期管理**：处理角色的创建、初始化、状态查询和数据持久化。
 - **属性管理**：维护角色的所有基础属性和战斗属性，如生命值 (HP)、行动次数 (Actions)、混乱值 (Stagger) 等。
 - **人格系统**：为核心角色提供人格切换机制，管理不同人格下的属性和技能配置。
-- **特性标签**：管理角色的特性标签（如人类、机械、异想体），为技能系统提供目标筛选依据。
+- **特性标签**：管理角色的特性标签（如人类、机械、异想体），当前仅存储在数据库中，不直接参与战斗结算，供后续机制调用。
 - **状态维护**：跟踪角色的战斗状态，如是否存活、是否处于混乱状态等。
 
 ### 1.2 数据结构 / 数据库设计
@@ -75,8 +75,9 @@
 | `is_staggered` | BOOLEAN | 是否处于混乱状态 | `False` |
 | `stagger_turns` | INTEGER | 混乱状态剩余回合数（初始为2，实现"当回合进入混乱，下回合结束解除"的逻辑） | 0 |
 | `emotion_level` | INTEGER | 当前情感等级 (由情感系统管理) | 0 |
-| `emotion_coins` | INTEGER | 当前情感硬币 (由情感系统管理) | 0 |
-| `tags` | TEXT | 特性标签, JSON 数组格式 (目前主要标签: "人类", "机械", "异想体") | `["人类", "异想体"]` |
+| `positive_emotion_coins` | INTEGER | 正面情感硬币 | 0 |
+| `negative_emotion_coins` | INTEGER | 负面情感硬币 | 0 |
+| `tags` | TEXT | 特性标签, JSON 数组格式 (目前主要标签: "人类", "机械", "异想体"；当前仅存储，不参与结算) | `["人类", "异想体"]` |
 | `ego_skill_id` | INTEGER | (核心角色专属)绑定的EGO技能ID | 301 |
 | `is_in_battle` | BOOLEAN | 是否在战斗中 | `True` |
 
@@ -134,18 +135,18 @@ class CharacterManager:
 
     def apply_damage(self, character_id: int, damage: int, is_fixed: bool = False):
         """
-        对角色造成伤害，处理混乱值和混乱状态。
+        对角色造成最终的生命值变化，处理混乱值和混乱状态。(注意：真正的伤害公式、强壮虚弱等应该在 SkillManager 或独立的战斗环境模块完成计算，本函数仅接收计算后的最终削减值)
         - 伪代码:
           1. 获取角色对象。
           2. 如果 `not is_fixed`:
              - 如果角色 `is_staggered`，伤害乘以 2。
-             - (可选) 应用易伤/虚弱等通用效果的修正 (如果未在外部计算)。
-          3. 检查并触发破裂效果（如有）：
-             - 计算破裂附加伤害 (强度 × 1)，加到最终伤害中。
-             - 破裂层数-1，若归零则移除破裂效果。
-          4. `current_hp` 减去最终伤害（包括破裂附加伤害）。
+          3. 如果 `not is_fixed`:
+             - 检查并触发破裂效果（如有）：
+               - 计算破裂附加伤害 (强度 × 1)。
+               - 注意：为了架构清晰，此步骤实际应当通过 `battle_context.trigger_event('on_hit', target)` 在外界执行，但基础伤害若要立刻结算，可直接在最终传值里预先加好，或在这里同步触发破裂衰减。
+          4. `current_hp` 减去最终合并伤害。
           5. 如果 `not is_fixed`:
-             - `current_stagger` 减去原始伤害（不包括破裂附加伤害）。
+             - `current_stagger` 减去原始伤害（不包括破裂/受击附加伤害）。
              - 检查 `current_stagger` 是否小于等于 0:
                - 如果是，设置 `is_staggered = True`, `stagger_turns = 2`, `current_actions = 0`。
                - 将 `current_stagger` 重置为 `max_stagger`。
@@ -159,9 +160,9 @@ class CharacterManager:
         为回合结束重置角色状态。
         - 伪代码:
           1. 获取角色对象。
-          2. 恢复行动次数: `current_actions = max_actions`。
-          3. 处理混乱状态: 如果 `is_staggered`，则 `stagger_turns -= 1`。
-          4. 如果 `stagger_turns` 变为 0，解除混乱状态: `is_staggered = False`。
+          2. 处理混乱状态: 如果 `is_staggered`，则 `stagger_turns -= 1`。
+          3. 如果 `stagger_turns` 变为 0，解除混乱状态: `is_staggered = False`。
+          4. 检查是否可以恢复行动力：如果解除后或本身没有混乱 (`not is_staggered`)，恢复 `current_actions = max_actions`。否则保持为 0（死锁行动力）。
           5. 更新数据库。
         """
         pass
@@ -178,7 +179,7 @@ class CharacterManager:
   - 场景结束 (Stage End) 或战斗结束 (Battle End) 时，会调用相应的重置方法清除角色状态。
 
 - **与情感系统 (Emotion System)**:
-  - 角色管理系统存储角色的 `emotion_level` 和 `emotion_coins`，但具体的逻辑由情感系统处理。
+  - 角色管理系统存储角色的 `emotion_level`、`positive_emotion_coins`、`negative_emotion_coins`，但具体逻辑由情感系统处理。
   - 情感系统升级时，可能会通过角色管理系统查询或更新角色的状态。
 
 ### 1.5 用户接口 (Telegram 命令)
@@ -202,7 +203,7 @@ class CharacterManager:
 其主要职责包括：
 - **技能定义与管理**：提供创建和存储技能的机制，每个技能包含基础信息和一系列行为。
 - **行为执行引擎**：按照“使用前 -> 使用时 -> 使用后”的顺序解析并执行技能的每个行为。
-- **目标解析**：根据行为定义的目标类型（如自身、单体敌人、全体友军等），动态确定效果作用的目标列表。
+- **目标解析**：技能层只进行一次目标指定（如需交互），行为层可“继承技能目标”或使用“自动目标逻辑”。
 - **伤害/治疗计算**：集成骰子公式解析器，计算基础伤害/治疗值。
 - **冷却管理**：跟踪技能的使用冷却，并提供接口供情感系统在升级时缩减冷却时间。
 - **条件检查**：在技能执行前，检查使用者是否满足情感等级等前置条件。
@@ -225,11 +226,14 @@ class CharacterManager:
 | `base_cooldown`| INTEGER | 基础冷却回合数 | 3 |
 | `emotion_req`| INTEGER | 情感等级要求 | 1 |
 | `skill_type` | TEXT | 技能类型: `NORMAL` 或 `EGO` | "NORMAL" |
+| `skill_target_scope` | TEXT | 技能目标范围 (`SELF`, `FRIENDLY`, `ENEMY`, `ALL`) | "ENEMY" |
+| `skill_target_method` | TEXT | 技能目标方式 (`SELF`, `SELECT_TARGET`, `ALL_TARGETS`, `RANDOM`) | "SELECT_TARGET" |
+| `skill_target_param` | INTEGER | 目标方式附加参数（如 `RANDOM` 的 X） | null |
 
 **关于 EGO 技能 (`skill_type` = 'EGO')**:
 1. EGO技能完全与角色绑定，不会根据角色人格(Persona)变化而被增加或移除。
 2. 相比普通技能，EGO技能异常强大，因此具备极高的情感等级要求 (`emotion_req`)。
-3. **重要限制**：EGO技能每场战斗只许施放一次。一旦使用，其冷却时间将被设置为一个特殊值（或直接标记为不可用），直到下一次战斗开始重置。
+3. **重要限制**：每名角色每场战斗至多施放一次 EGO 技能。一旦使用，角色会被标记为“本场已使用EGO”，直到下一次战斗开始重置。
 
 #### 2.2.2 `skill_behaviors` 表
 
@@ -240,9 +244,10 @@ class CharacterManager:
 | `id` | INTEGER | 主键，行为唯一标识符 | 301 |
 | `skill_id` | INTEGER | 所属技能ID, 外键关联 `skills` 表 | 201 |
 | `timing` | TEXT | 作用时机 (`PRE`, `ON`, `POST`) | "ON" |
-| `target_scope`| TEXT | 目标范围 (`SELF`, `FRIENDLY`, `ENEMY`, `ALL`) | "ENEMY" |
-| `target_method`| TEXT | 目标选择方式 (`SELF`, `SELECT_TARGET`, `ALL_TARGETS`, `RANDOM`) | "SELECT_TARGET" |
-| `target_param`| INTEGER | 方式的附加参数 (如 `RANDOM` 方式的 X 值) | null |
+| `target_source` | TEXT | 目标来源 (`INHERIT_SKILL` 或 `AUTO`) | "INHERIT_SKILL" |
+| `target_scope`| TEXT | 自动目标范围 (`SELF`, `FRIENDLY`, `ENEMY`, `ALL`)，仅 `AUTO` 时生效 | "ENEMY" |
+| `target_method`| TEXT | 自动目标方式 (`SELF`, `ALL_TARGETS`, `RANDOM`)，仅 `AUTO` 时生效 | "ALL_TARGETS" |
+| `target_param`| INTEGER | 自动方式附加参数 (如 `RANDOM` 的 X)，仅 `AUTO` 时生效 | null |
 | `effect_type`| TEXT | 效果种类 (`DAMAGE`, `HEAL`, `APPLY_EFFECT`, `SPECIAL`) | "DAMAGE" |
 | `effect_value`| TEXT | 效果数值 (骰子公式, 状态效果名称等) | "2d6+3" |
 | `effect_params`| TEXT | 效果额外参数 (JSON格式), 如状态效果强度/层数 | `{"type": "BURN", "intensity": 2, "stacks": 1}` |
@@ -256,9 +261,18 @@ class CharacterManager:
 | :--- | :--- | :--- | :--- |
 | `character_id`| INTEGER | 角色ID | 1 |
 | `skill_id` | INTEGER | 技能ID | 201 |
-| `cooldown` | INTEGER | 剩余冷却回合 (如果该技能为 EGO 技能，使用后可将此值设为特殊值如 -1 或 999 标记本局已用) | 2 |
+| `cooldown` | INTEGER | 剩余冷却回合 | 2 |
 
-#### 2.2.4 骰子公式系统
+#### 2.2.4 `battle_ego_usage` 表
+
+记录每个角色在本场战斗中是否已施放过任意 EGO 技能。
+
+| 字段名 | 类型 | 描述 | 示例 |
+| :--- | :--- | :--- | :--- |
+| `character_id` | INTEGER | 角色ID | 1 |
+| `ego_used` | INTEGER | 本场是否已用EGO (0/1) | 1 |
+
+#### 2.2.5 骰子公式系统
 
 技能的伤害/治疗值通过骰子公式定义，提供随机性和可预测性的平衡。
 
@@ -312,32 +326,36 @@ class SkillManager:
         """
         pass
 
-    def execute_skill(self, user_id: int, skill_id: int, primary_target_id: int = None):
+    def execute_skill(self, user_id: int, skill_id: int, selected_skill_targets: list[int] | None = None):
         """
         执行一个完整的技能流程。
         - 伪代码:
           1. 获取技能的完整定义。
-          2. 检查技能是否为 EGO 技能 (`skill_type` == 'EGO'):
-             a. 检查该角色在本场战斗中是否已经使用过该技能（或任何EGO技能）。
+          2. 根据技能层目标合同 (`skill_target_scope` + `skill_target_method`) 解析本次技能目标快照。
+          3. 检查技能是否为 EGO 技能 (`skill_type` == 'EGO'):
+             a. 检查该角色在本场战斗中是否已经使用过任意 EGO 技能。
              b. 检查情感等级要求。
-          3. 否则检查普通技能冷却和情感等级要求。
-          4. 初始化战斗播报构建器 (ReportBuilder)。
-          5. 按顺序执行 PRE-timing 行为。
-          6. 按顺序执行 ON-timing 行为 (必须存在)。
-          7. 按顺序执行 POST-timing 行为。
-          8. 设置技能冷却。（如果 `skill_type` == 'EGO'，则标记本场战斗已使用）。
-          9. 消耗使用者行动次数。
-          10. 触发使用者的行动后效果（如流血状态）。
-          11. 返回构建好的单一战斗播报文本。
+          4. 否则检查普通技能冷却和情感等级要求。
+          5. 初始化战斗播报构建器 (ReportBuilder) 与事件环境 `battle_context`。
+          6. 按顺序执行 PRE-timing 行为。
+          7. 按顺序执行 ON-timing 行为 (必须存在)。
+          8. 按顺序执行 POST-timing 行为。
+          9. 设置攻击者技能冷却。（如果 `skill_type` == 'EGO'，则标记角色本场 `ego_used = 1`）。
+          10. 消耗使用者行动次数。
+          11. **触发全局冷却与行为推进：遍历全场所有存活角色，调用 `reduce_cooldown(-1)`，这一步体现了“任一角色行动后，全场技能CD-1”的底层机制（源自冷却系统规则）。**
+          12. 触发使用者的行动后效果（如流血状态，或者通过 `battle_context.trigger_event('on_action_end', user)` 激活相关异想体被动）。
+          13. 返回构建好的单一战斗播报文本。
         """
         pass
 
-    def _execute_behaviors_for_timing(self, user: Character, behaviors: list[Behavior], primary_target: Character, report_builder):
+    def _execute_behaviors_for_timing(self, user: Character, behaviors: list[Behavior], skill_target_snapshot: list[Character], report_builder):
         """
         私有辅助函数，执行特定时机下的所有行为。
         - 伪代码:
           1. 遍历行为列表。
-          2. 对每个行为调用 `_resolve_targets()` 确定目标列表。
+          2. 对每个行为调用 `_resolve_targets()` 确定目标列表：
+             - `target_source = INHERIT_SKILL`：继承本次技能目标快照。
+             - `target_source = AUTO`：使用行为自己的自动目标逻辑。
           3. 遍历目标列表，对每个目标应用效果 (`_apply_effect()`)。
           4. 将每个行为的执行结果添加到 report_builder。
         - 播报格式示例:
@@ -351,20 +369,32 @@ class SkillManager:
         """
         pass
 
-    def _resolve_targets(self, user: Character, target_scope: str, target_method: str, primary_target: Character, target_param: int = None) -> list[Character]:
+    def _resolve_targets(self, user: Character, behavior: Behavior, skill_target_snapshot: list[Character]) -> list[Character]:
         """
         根据目标范围和方式解析出所有受影响的角色。
         - 伪代码:
-          1. 确定目标池 (`target_scope`): 
+          1. 如果 `behavior.target_source == 'INHERIT_SKILL'`，直接返回 `skill_target_snapshot`。
+          2. 否则按自动目标逻辑处理 (`behavior.target_source == 'AUTO'`)。
+          3. 确定自动目标池 (`target_scope`):
              - 'SELF': [user]
              - 'FRIENDLY': 所有存活的友方角色
              - 'ENEMY': 所有存活的敌方角色
              - 'ALL': 所有存活的友方和敌方角色
-          2. 从目标池中按方式 (`target_method`) 选择:
+          4. 从目标池中按方式 (`target_method`) 选择:
              - 'SELF': 从'自身'池中选择自己（仅对'自身'范围有效）。
-             - 'SELECT_TARGET': 返回 [primary_target]。 (UI交互时已从对应范围池中指定)。
              - 'ALL_TARGETS': 返回池中所有角色。
-             - 'RANDOM': 从池中随机选择 `target_param` (X) 个目标 (可重复/不可重复由实现决定，即广域乱射:X)。
+             - 'RANDOM': 从池中随机选择 `target_param` (X) 个目标（可重复命中，放回抽样，即广域乱射:X）。
+        """
+        pass
+
+    def _resolve_skill_targets(self, user: Character, skill: Skill, selected_skill_targets: list[int] | None) -> list[Character]:
+        """
+        解析技能层的唯一目标指定。
+        - 伪代码:
+          1. 读取技能的 `skill_target_scope`、`skill_target_method`、`skill_target_param`。
+          2. 如果 `skill_target_method == 'SELECT_TARGET'`，使用交互阶段只选择一次的目标。
+          3. 如果 `skill_target_method` 为 `SELF/ALL_TARGETS/RANDOM`，按自动逻辑解析。
+          4. 返回技能目标快照，供所有 `INHERIT_SKILL` 行为复用。
         """
         pass
 
@@ -372,8 +402,13 @@ class SkillManager:
         """
         对单个目标应用单个效果。
         - 伪代码:
-          1. 'DAMAGE': 解析骰子公式 `value`，调用 `char_manager.apply_damage()`。
-          2. 'HEAL': 解析骰子公式 `value`，调用 `char_manager.apply_heal()`。
+          1. 'DAMAGE': 
+             a. 解析骰子公式 `value` 获得基础伤害数值。
+             b. 触发 `battle_context.trigger_event('on_before_damage', user, target)` 轮询异想体书页效果（如“造成伤害前提升...”）。
+             c. 结合攻击者自身的 Buff（强壮/虚弱）、目标受击修正（护盾/守护/易伤）与混乱状态，通过统一战斗计算器计算最终伤害，并加入受击相关效果。
+             d. 向 `char_manager.apply_damage()` 传递最终结算数值扣减。
+             e. 触发 `battle_context.trigger_event('on_after_damage', user, target)` 轮询后置被动（如火柴“造成伤害后附加烧伤”）。
+          2. 'HEAL': 解析骰子公式 `value`，结合生命恢复类修饰，调用 `char_manager.apply_heal()`。
           3. 'APPLY_EFFECT': 调用 `effect_manager.apply_effect()`，参数来自 `params`。
           4. 'SPECIAL': 调用特殊效果扩展系统的接口。
         """
@@ -396,7 +431,7 @@ class SkillManager:
   - 强依赖关系。执行技能时需要频繁查询和更新角色属性，如HP、情感等级、行动次数等。
 
 - **与状态效果系统 (Status Effect System)**:
-  - 当行为的 `effect_type` 为 `APPLY_EFFECT` 时，技能系统会将效果的定义（名称、强度、层数等）传递给状态效果系统进行处理。
+  - 当行为的 `effect_type` 为 `APPLY_EFFECT` 时，技能系统会将效果定义（名称与参数）传递给状态效果系统进行处理。
 
 - **与攻击逻辑系统 (Attack Logic System)**:
   - 攻击逻辑系统作为用户交互的前端，负责收集用户输入的攻击者、技能和目标，然后调用本系统的 `execute_skill()` 方法来启动技能执行流程。
@@ -443,7 +478,7 @@ class SkillManager:
 | `intensity` | INTEGER | 效果强度 | 2 |
 | `stacks` | INTEGER | 效果层数 | 1 |
 | `duration` | INTEGER | 剩余持续回合数 | 3 |
-| `custom_params`| TEXT | 特殊效果的自定义参数 (JSON格式) | `{"creator_id": 2}` |
+| `custom_params`| TEXT | 特殊效果的自定义参数 (JSON格式, 可标记 `stage_persistent`) | `{"amount": 5, "stage_persistent": false}` |
 
 #### 3.2.2 状态效果详细列表
 
@@ -463,16 +498,16 @@ class SkillManager:
 
 ##### 通用效果 (GENERIC)
 
-仅保留强度，强度叠加规则为取最大值。回合内有效，回合结束时清空。
+仅保留强度，强度叠加规则为取最大值。默认回合内有效并在回合结束时清空；其中护盾与麻痹为例外保留效果。
 
 | 效果名称 | 英文标识 | 图标 | 效果描述 | 持续时间 |
 | :--- | :--- | :--- | :--- | :--- |
 | **强壮** | `STRENGTH` | 💪 | 攻击造成的最终伤害增加 `强度 × 10%` | 回合结束清除 |
 | **虚弱** | `WEAKNESS` | 😵 | 攻击造成的最终伤害减少 `强度 × 10%` | 回合结束清除 |
 | **守护** | `GUARD` | ☂️ | 受到的最终伤害减少 `强度 × 10%` | 回合结束清除 |
-| **护盾** | `SHIELD` | 🛡️ | 抵挡等同于强度的伤害，抵挡后强度减少 | 直到强度耗尽 |
+| **护盾** | `SHIELD` | 🛡️ | 抵挡等同于强度的伤害，抵挡后强度减少 | 直到强度耗尽（或 Stage End/Battle End 清理） |
 | **易伤** | `VULNERABLE` | 💔 | 受到的最终伤害增加 `强度 × 10%` | 回合结束清除 |
-| **麻痹** | `PARALYSIS` | ⚡ | 投掷伤害骰子时，`min(骰子数, 麻痹强度)` 个骰子结果归零 | 每归零一个骰子强度-1 |
+| **麻痹** | `PARALYSIS` | ⚡ | 投掷伤害骰子时，`min(骰子数, 麻痹强度)` 个骰子结果归零 | 直到强度归零（或 Stage End/Battle End 清理） |
 
 ##### 特殊效果 (SPECIAL)
 
@@ -480,8 +515,8 @@ class SkillManager:
 
 | 效果名称 | 英文标识 | 图标 | 效果描述 | 参数说明 |
 | :--- | :--- | :--- | :--- | :--- |
-| **硬血** | `HARDBLOOD` | 🩸 | 特殊资源池，可被特定技能消耗以增强伤害 | 仅存在数量（强度），无持续时间 |
-| **黑夜领域** | `DARK_DOMAIN` | 🌑 | 回合结束时获得6级强壮、6级易伤、1级加速、666负面情感币；免疫一次致死伤害 | 持续3回合，有特殊死亡免疫机制 |
+| **硬血** | `HARDBLOOD` | 🩸 | 特殊资源池，可被特定技能消耗以增强伤害 | 仅存在数量参数 `amount`，与强度/层数体系解耦 |
+| **黑夜领域** | `DARK_DOMAIN` | 🌑 | 回合结束时获得6级强壮、6级易伤、1点额外行动点、666负面情感币；免疫一次致死伤害 | 持续3回合，有特殊死亡免疫机制 |
 | **削弱光环** | `WEAKEN_AURA` | 💜 | 回合结束时对所有敌方施加5级虚弱和5级易伤（各持续1回合） | 持续5回合 |
 
 ##### 即时效果 (INSTANT)
@@ -517,10 +552,13 @@ class StatusEffectManager:
                - 注意：破裂在受击时触发并减少层数，流血在行动后触发并减少层数，不随回合自动减少。
              - 'GENERIC' (强壮, 虚弱, 守护, 护盾, 易伤, 麻痹): 
                - 仅保留强度。强度 = max(旧强度, 新强度)。
-               - 持续时间通常为本回合 (duration=1)，回合结束清除。
+               - 默认持续时间为本回合 (duration=1)，回合结束清除。
+               - 例外：护盾与麻痹不在回合结束自动清空，分别按“强度耗尽/强度归零”结束。
                - 麻痹特殊机制：在伤害计算时，min(骰子数, 麻痹强度) 个骰子结果归零，每归零一个骰子，麻痹强度-1。
              - 'SPECIAL' (硬血, 黑夜领域, 削弱光环): 
-               - 根据 `params` 中的自定义逻辑处理 (如硬血只增加数量)。
+               - 根据 `params` 中的自定义逻辑处理 (如硬血仅维护 `amount`)。
+               - 特殊效果不使用强度/层数体系。
+               - Stage End 时默认清除临时特殊效果；仅 `params.stage_persistent = true` 的特殊效果允许跨阶段保留。
              - 'INSTANT' (吸血): 
                - 立即执行效果，不写入数据库。
                - 注意：技能冷却缩减只通过情感系统升级触发，不作为即时效果存在。
@@ -534,7 +572,9 @@ class StatusEffectManager:
         - 伪代码:
           1. 查询该角色所有 `active_status_effects`。
           2. 遍历效果列表:
-             - 如果是 'GENERIC' 效果 (如强壮、虚弱)，直接移除。
+             - 如果是 'GENERIC' 效果:
+               - 强壮、虚弱、守护、易伤：回合结束直接移除。
+               - 护盾、麻痹：作为例外保留，不在回合结束自动移除。
              - 如果是 'REGULAR' 效果:
                - 烧伤、中毒：根据 `intensity` 和 `stacks` 计算固定伤害，调用 `char_manager.apply_damage()`，层数-1。
                - 呼吸法：应用暴击率加成，层数-1。
@@ -563,7 +603,10 @@ class StatusEffectManager:
 
     def clear_effects_on_stage_end(self):
         """
-        在 Stage End 清除所有通用效果 (GENERIC) 和常规效果 (REGULAR)。
+        在 Stage End 清除所有临时效果：
+        - 全部通用效果 (GENERIC)
+        - 全部常规效果 (REGULAR)
+        - 全部临时特殊效果 (SPECIAL 且 `stage_persistent != true`)
         """
         pass
 
@@ -622,6 +665,7 @@ class StatusEffectManager:
 - 等级4的额外行动次数是临时的，会在战斗结束时移除
 - Stage End 保留情感等级和硬币以及已选的异想体书页
 - Battle End 重置情感等级和硬币为0，并彻底重置所有的书页状态
+- 旧版“情感被动常驻增益”（如固定强壮/守护）不再使用；回合开始被动统一由异想体书页触发
 
 #### 主要职责
 
@@ -629,6 +673,7 @@ class StatusEffectManager:
 - **等级提升**：当硬币达到升级阈值时，自动提升角色的情感等级。
 - **异想体书页抽取**：当核心角色升级时，根据正/负硬币的占比，从书页池中抽取“觉醒型”或“崩溃型”书页供玩家3选1。
 - **升级效果处理**：执行升级带来的效果，主要是为角色的所有技能缩减冷却时间，以及应用书页效果。
+- **回合开始书页被动触发**：在每回合开始时触发角色已激活异想体书页的被动效果。
 - **状态重置**：在 Stage End 和 Battle End 时，根据规则保留或重置角色的情感等级、硬币及书页。
 - **日志记录**：记录所有硬币获取和等级提升的事件，便于调试和追溯。
 
@@ -792,10 +837,22 @@ class EmotionManager:
     
     def process_turn_start_emotions(self, character_id: int):
         """
-        在回合开始时处理待处理的情感升级。
+        在回合开始时处理情感相关逻辑。
         - 伪代码:
           1. 检查角色是否有 `pending_emotion_upgrade = 1`。
           2. 如果有，则调用 `_execute_emotion_upgrade()`。
+          3. 调用 `_trigger_abnormality_pages_on_turn_start(character_id)` 触发该角色已激活书页的回合开始被动。
+          4. 返回回合开始结算消息列表。
+        """
+        pass
+
+    def _trigger_abnormality_pages_on_turn_start(self, character_id: int):
+        """
+        触发异想体书页的回合开始被动。
+        - 伪代码:
+          1. 读取角色 `active_abnormality_pages`。
+          2. 遍历每张书页，调用 `SpecialEffectManager` 执行其 `on_turn_start` 钩子。
+          3. 收集并返回所有被动触发播报。
         """
         pass
 
@@ -817,7 +874,7 @@ class EmotionManager:
 ### 4.4 模块交互
 
 - **与角色管理系统 (Character Management System)**:
-  - 情感系统的所有操作都围绕着更新 `characters` 表中的 `emotion_level` 和 `emotion_coins` 字段。
+  - 情感系统的所有操作都围绕着更新 `characters` 表中的 `emotion_level`、`positive_emotion_coins`、`negative_emotion_coins` 字段。
 
 - **与技能系统 (Skill System)**:
   - 技能系统中的某些行为（如造成伤害、治疗）会触发本系统的 `add_coins()` 方法。
@@ -825,7 +882,7 @@ class EmotionManager:
 
 - **与回合管理系统 (Turn Management System)**:
   - 回合管理系统在 `Stage End` 时会保留情感数据，但在 `Battle End` 时会调用本系统的 `reset_for_battle_end()` 进行重置。
-  - 回合开始时，可以调用 `process_turn_start_emotions` 来统一处理升级效果。
+  - 回合开始时，可以调用 `process_turn_start_emotions` 来统一处理升级与异想体书页被动触发。
 
 ### 4.5 用户接口 (Telegram 命令)
 
@@ -842,11 +899,14 @@ class EmotionManager:
 回合管理系统是战斗流程的“心脏”，负责协调和驱动整个战斗的进行。它定义了战斗的各个阶段（回合、场景、战斗），并按照正确的顺序调用其他模块，处理状态的结算和重置。
 
 其主要职责包括：
-- **战斗状态机管理**：维护当前战斗的全局状态，如当前回合数、当前阶段（进行中、场景结束、战斗结束）等。
+- **战斗状态机管理**：维护当前战斗的全局状态，如当前回合数、当前阶段与当前流程相位（Battle/Stage/Turn 的 Start/End）。
+- **回合开始处理 (Turn Start)**：处理回合开始逻辑（如情感升级结算、异想体书页回合开始被动触发），并开启本回合行动窗口。
 - **回合结束处理 (Turn End)**：触发所有角色的回合结束逻辑，包括状态效果结算、行动次数恢复等。
+- **战斗开始处理 (Battle Start)**：初始化战斗级状态与临时数据，并进入阶段开始流程。
+- **阶段开始处理 (Stage Start)**：每个新阶段开始时，根据选择结果将角色加入战斗。
 - **场景结束处理 (Stage End)**：当一波敌人被全部击败时，执行场景结束逻辑，清理临时状态并准备下一波。
 - **战斗结束处理 (Battle End)**：当所有敌人或所有友方被击败时，执行战斗结束逻辑，完全重置战斗状态。
-- **流程协调**：作为协调者，按预定顺序调用角色管理、状态效果和情感等系统的相关接口。
+- **流程协调**：作为协调者，按预定顺序调用角色管理、状态效果和情感等系统接口，采用“解耦但连续执行”的链路（如 `end_turn()` 后进入 `start_turn()`）。
 
 ### 5.2 数据结构 / 数据库设计
 
@@ -860,7 +920,9 @@ class EmotionManager:
 | :--- | :--- | :--- | :--- |
 | `id` | INTEGER | 主键, 通常只有一行数据 | 1 |
 | `current_turn`| INTEGER | 当前战斗的回合数 | 3 |
-| `battle_phase`| TEXT | 当前阶段 (`IN_PROGRESS`, `STAGE_END`, `BATTLE_END`) | "IN_PROGRESS" |
+| `current_stage` | INTEGER | 当前阶段序号 | 2 |
+| `battle_phase`| TEXT | 当前流程相位 (`BATTLE_START`, `STAGE_START`, `TURN_START`, `IN_PROGRESS`, `TURN_END`, `STAGE_END`, `BATTLE_END`) | "IN_PROGRESS" |
+| `pending_stage_selection` | INTEGER | 是否等待阶段入战选择 (0/1) | 0 |
 | `active_character_id`| INTEGER | 当前行动的角色ID (为未来扩展，当前系统为统一回合) | 2 |
 
 ### 5.3 核心函数 / API 设计
@@ -875,23 +937,52 @@ class TurnManager:
         self.effect_manager = effect_manager
         self.emotion_manager = emotion_manager
 
+    def start_turn(self):
+        """
+        处理一个标准的回合开始 (Turn Start)。
+        - 伪代码:
+          1. 更新 `battle_state` 的 `battle_phase` 为 'TURN_START'。
+          2. 如果 `pending_stage_selection == 1`，则等待 `start_stage()` 选人，不进入行动阶段。
+          3. 增加 `battle_state.current_turn` 计数。
+          4. 获取所有在战斗中的存活角色列表。
+          5. 对每个角色调用 `emotion_manager.process_turn_start_emotions(char_id)`：
+             - 处理待升级情感。
+             - 触发异想体书页的回合开始被动。
+          6. 初始化本回合行动窗口（如行动顺序/当前可行动角色）。
+          7. 将 `battle_phase` 切换为 'IN_PROGRESS'。
+        """
+        pass
+
     def end_turn(self):
         """
         处理一个标准的回合结束 (Turn End)。
         - 伪代码:
-          1. 获取所有在战斗中的角色列表。
-          2. 对每个角色，按顺序执行:
+          1. 更新 `battle_state` 的 `battle_phase` 为 'TURN_END'。
+          2. 获取所有在战斗中的角色列表。
+         3. 对每个角色，按顺序执行:
              a. 调用 `effect_manager.process_turn_end_effects(char_id)` 结算DoT/HoT，清除通用效果。
              b. (检查死亡状态)。
              c. 调用 `char_manager.reset_for_turn_end(char_id)`:
-                - 恢复行动力: `current_actions = max_actions`。
                 - 处理混乱状态: 如果 `is_staggered == True`，则 `stagger_turns -= 1`。
                 - 如果 `stagger_turns` 归零，解除混乱状态: `is_staggered = False`。
-                - 混乱逻辑说明：混乱条清零时进入混乱状态，`stagger_turns` 初始为2，经过两次回合结束后归零并解除，实现"当回合进入混乱，下回合结束解除"。
-             d. 调用 `emotion_manager.process_turn_start_emotions(char_id)` (应用于下一回合开始)。
-          3. 增加 `battle_state` 的 `current_turn` 计数。
-          4. 检查战斗是否结束 (一方全部阵亡)，如果结束则调用 `end_battle()`。
-          5. 检查是否满足 Stage End 条件（当前波次敌人全部阵亡），如果满足则调用 `end_stage()`。
+                - 如果解除后或原本并未混乱 (`is_staggered == False`)，才恢复行动力: `current_actions = max_actions`。否则 `current_actions = 0`。
+                - (混乱逻辑说明：混乱条清零时进入混乱状态，`stagger_turns` 初始为2，经过两次回合结束后归零并解除，实现"当回合进入混乱，下回合结束解除")。
+          3. 检查战斗是否结束 (一方全部阵亡)，如果结束则调用 `end_battle()`。
+          4. 检查是否满足 Stage End 条件（当前波次敌人全部阵亡），如果满足则调用 `end_stage()`。
+          5. 若战斗继续，调用 `start_turn()` 进入下一回合（调用链连续执行，但回合开始逻辑与回合结束逻辑保持解耦）。
+        """
+        pass
+
+    def start_stage(self, stage_index: int, friendly_ids: list[int], enemy_ids: list[int]):
+        """
+        处理一个场景/波次开始 (Stage Start)。
+        - 伪代码:
+          1. 更新 `battle_state.current_stage = stage_index`，并将 `battle_phase` 置为 `STAGE_START`。
+          2. 将所有角色先设为 `is_in_battle = False`。
+          3. 将被选中的友方 `friendly_ids` 和敌方 `enemy_ids` 设为 `is_in_battle = True`。
+          4. 初始化本阶段临时数据（如阶段内统计、阶段事件快照）。
+          5. 清空 `pending_stage_selection`。
+          6. 调用 `start_turn()` 开启该阶段首回合。
         """
         pass
 
@@ -900,11 +991,12 @@ class TurnManager:
         处理一个场景/波次结束 (Stage End)。
         - 伪代码:
           1. 更新 `battle_state` 的 `battle_phase` 为 'STAGE_END'。
-          2. 调用 `effect_manager.clear_effects_on_stage_end()` 清除通用和常规效果。
+          2. 调用 `effect_manager.clear_effects_on_stage_end()` 清除全部临时效果（含临时特殊效果）。
           3. 对所有角色:
              a. 重置混乱值 `current_stagger = max_stagger`。
-             b. 移除战斗中的临时标记。
-          4. 准备加载下一波敌人或结束战斗。
+             b. 设置 `is_in_battle = False`。
+          4. 设置 `pending_stage_selection = 1`，进入下一阶段的入战选择流程。
+          5. 若没有下一阶段，改由 `end_battle()` 收尾。
         """
         pass
 
@@ -913,11 +1005,11 @@ class TurnManager:
         处理整个战斗结束 (Battle End)。
         - 伪代码:
           1. 更新 `battle_state` 的 `battle_phase` 为 'BATTLE_END'。
-          2. 调用 `end_stage()` 的所有清理逻辑 (如果适用)。
-          3. 调用 `effect_manager.clear_all_effects_on_battle_end()`。
-          4. 调用 `emotion_manager.reset_for_battle_end()`。
-          5. 将所有角色的 `is_in_battle` 设为 `False`。
-          6. 清理战斗相关的所有临时数据 (包括清空 `battle_skill_cooldowns` 表，重置核心角色 EGO 技能的使用状态)。
+          2. 执行最终清理：`effect_manager.clear_all_effects_on_battle_end()`。
+          3. 调用 `emotion_manager.reset_for_battle_end()`。
+          4. 将所有角色的 `is_in_battle` 设为 `False`。
+          5. 清理战斗相关临时数据（包括清空 `battle_skill_cooldowns` 与 `battle_ego_usage`）。
+          6. 重置 `pending_stage_selection = 0`。
         """
         pass
 
@@ -925,9 +1017,10 @@ class TurnManager:
         """
         初始化一场新的战斗。
         - 伪代码:
-          1. 重置或创建 `battle_state`。
-          2. 将所有参与战斗的角色 `is_in_battle` 设为 `True`。
-          3. 初始化角色的战斗属性。
+          1. 重置或创建 `battle_state`，并将 `battle_phase` 置为 `BATTLE_START`。
+          2. 初始化战斗级临时数据（如冷却表、EGO使用表）。
+          3. 将所有角色 `is_in_battle = False`，并设置 `pending_stage_selection = 1`。
+          4. 按第一阶段选择结果调用 `start_stage(stage_index=1, friendly_ids, enemy_ids)`。
         """
         pass
 ```
@@ -935,18 +1028,21 @@ class TurnManager:
 ### 5.4 模块交互
 
 - **与角色管理系统 (Character Management System)**:
-  - 频繁交互。在回合、场景、战斗结束时，都需要调用角色管理系统的方法来重置或更新角色的各种状态（行动力、混乱值等）。
+  - 频繁交互。在回合、场景、战斗的开始与结束流程中，都需要调用角色管理系统的方法来重置或更新角色状态（行动力、混乱值、在战斗标记等）。
 
 - **与状态效果系统 (Status Effect System)**:
   - 在回合结束时调用状态效果系统来结算持续效果，在场景/战斗结束时调用其清理接口。
 
 - **与情感系统 (Emotion System)**:
+  - 在回合开始时调用 `process_turn_start_emotions` 处理升级与书页被动。
   - 在战斗结束时，调用情感系统接口重置所有角色的情感等级和硬币。
 
 ### 5.5 用户接口 (Telegram 命令)
 
+- `/start_turn`: (管理命令) 手动触发回合开始逻辑（通常由 `end_turn` 后自动串接执行）。
 - `/end_turn`: (管理/玩家命令) 手动结束当前回合，并触发所有回合结束逻辑。
 - `/start_battle`: (管理命令) 手动开始一场战斗，需要指定参战的友方和敌方单位。
+- `/start_stage`: (管理命令) 在 Stage End 后为下一阶段选择入战角色并开始新阶段。
 - `/reset_battle`: (管理命令) 强制结束并重置当前战斗，调用 `end_battle()`。
 
 ---
@@ -970,14 +1066,7 @@ class TurnManager:
 #### `context.user_data` 结构示例
 
 ```json
-{
-    "attack_flow": {
-        "state": "SELECTING_SKILL",
-        "attacker_id": 1,
-        "skill_id": null,
-        "target_id": null
-    }
-}
+{"attack_flow": {"state": "SELECTING_SKILL", "attacker_id": 1, "skill_id": null, "selected_skill_targets": []}}
 ```
 
 ### 6.3 核心函数 / API 设计
@@ -1026,12 +1115,12 @@ class AttackConversation:
         处理用户选择技能的回调。
         - 伪代码:
           1. 从回调数据中获取 `skill_id` 并存入 `context.user_data`。
-          2. 获取技能定义，检查其行为中的 `target_method`。
-          3. 如果所有行为都是 'SELF', 'ALL_TARGETS', 'RANDOM' 等无需指定具体目标的类型:
-             a. 调用 `_execute_and_report()` 执行技能 (primary_target_id=None)。
+          2. 获取技能定义，读取技能层目标合同 `skill_target_scope` + `skill_target_method`。
+          3. 如果技能层目标方式不是 `SELECT_TARGET`（例如 `SELF/ALL_TARGETS/RANDOM`）:
+             a. 调用 `_execute_and_report()` 执行技能（`selected_skill_targets` 为空，由技能层自动解析）。
              b. 结束会话 (ConversationHandler.END)。
-          4. 如果有行为需要选择目标 ('SELECT_TARGET'):
-             a. 根据该行为的 `target_scope` ('FRIENDLY', 'ENEMY', 'ALL') 查询所有合法的目标角色。
+          4. 如果技能层目标方式为 `SELECT_TARGET`:
+             a. 按技能层 `skill_target_scope` 查询合法目标。
              b. 生成目标选择的内联键盘。
              c. 编辑原消息，要求用户选择目标。
              d. 返回当前状态，等待目标选择。
@@ -1042,10 +1131,10 @@ class AttackConversation:
         """
         处理用户选择目标的回调，并执行最终的攻击。
         - 伪代码:
-          1. 从回调数据中获取 `target_id` (如果适用)。
-          2. 从 `context.user_data` 中集齐 `attacker_id`, `skill_id`, `target_id`。
-          3. 调用 `skill_manager.execute_skill(attacker_id, skill_id, primary_target_id=target_id)`。
-             - 注意：无论技能包含多少个行为，只要涉及 'SELECT_TARGET'，都使用此 target_id。
+          1. 从回调数据中获取并写入 `selected_skill_targets`（仅技能层选择一次）。
+          2. 从 `context.user_data` 中集齐 `attacker_id`, `skill_id`, `selected_skill_targets`。
+          3. 调用 `skill_manager.execute_skill(attacker_id, skill_id, selected_skill_targets=selected_skill_targets)`。
+             - 注意：行为目标要么继承技能层目标，要么使用行为自带的自动目标逻辑（不再二次交互）。
           4. 获取技能执行结果的单一播报文本。
           5. 编辑原消息，显示战斗结果。
           6. 结束会话 (ConversationHandler.END)。
@@ -1093,7 +1182,7 @@ class EnemyAttackConversation:
 
 - **与技能系统 (Skill System)**:
   - 这是攻击逻辑的最终执行者。本系统在收集完所有参数后，调用 `skill_manager.execute_skill()`。
-  - 在生成选项时，需要查询技能系统获取技能的定义（如 `target_scope` 和 `target_method`）。
+  - 在生成选项时，需要查询技能系统获取技能层目标合同（如 `skill_target_scope` 和 `skill_target_method`）与行为目标来源（`target_source`）。
 
 - **与角色管理系统 (Character Management System)**:
   - 在流程的每一步都需要查询角色数据，例如：获取可选的攻击者列表、获取目标的存活状态等。
@@ -1235,7 +1324,6 @@ class SpecialEffectManager:
 class HardbloodEffect(SpecialEffectInterface):
     def execute(self, user, targets, params, battle_context):
         amount = params.get("amount", 0)
-        # 为施法者添加硬血资源(使用自定义参数，不使用强度/层数)
         current_hardblood = battle_context.effect_manager.get_effect(user.id, "HARDBLOOD")
         if current_hardblood:
             # 累加硬血数量
@@ -1249,10 +1337,7 @@ class HardbloodEffect(SpecialEffectInterface):
                 target_id=user.id,
                 effect_name="HARDBLOOD",
                 category="SPECIAL",
-                intensity=0,  # 特殊效果不使用强度
-                stacks=0,  # 特殊效果不使用层数
-                duration=0,  # 无持续时间限制
-                params={"amount": amount}
+                params={"amount": amount, "stage_persistent": False}
             )
         return f"{user.name} 获得了 {amount} 点硬血！"
 
@@ -1305,14 +1390,12 @@ class DarkDomainEffect(SpecialEffectInterface):
             target_id=user.id,
             effect_name="DARK_DOMAIN",
             category="SPECIAL",
-            intensity=0,  # 特殊效果不使用强度
-            stacks=0,  # 特殊效果不使用层数
-            duration=0,  # 使用自定义参数管理持续时间
             params={
                 "remaining_turns": duration,
+                "stage_persistent": False,
                 "death_immunity_used": False,  # 死亡免疫是否已使用
                 "turn_end_effects": {
-                    "STRENGTH": {"value": 6},  # 不使用强度/层数，直接指定数值
+                    "STRENGTH": {"value": 6},
                     "VULNERABLE": {"value": 6},
                     "BONUS_ACTIONS": {"value": 1},  # 1额外行动点
                     "emotion_coins": {"negative": 666}
@@ -1327,18 +1410,15 @@ def process_dark_domain_turn_end(character_id, effect, battle_context):
     params = effect.custom_params
     turn_effects = params.get("turn_end_effects", {})
     
-    # 应用强壮(不使用通用效果系统，直接修改攻击力)
+    # 应用强壮(调用标准的通用状态方法)
     if "STRENGTH" in turn_effects:
         value = turn_effects["STRENGTH"]["value"]
-        char = battle_context.char_manager.get_character(character_id)
-        # 临时攻击力加成，回合结束时移除
-        char.temp_attack_bonus = value * 0.1  # 6级=60%加成
+        battle_context.effect_manager.apply_effect(character_id, "STRENGTH", "GENERIC", intensity=value)
     
-    # 应用易伤(不使用通用效果系统，直接修改受伤倍率)
+    # 应用易伤(调用标准的通用状态方法)
     if "VULNERABLE" in turn_effects:
         value = turn_effects["VULNERABLE"]["value"]
-        char = battle_context.char_manager.get_character(character_id)
-        char.temp_damage_taken_multiplier = 1 + (value * 0.1)  # 6级=+60%受伤
+        battle_context.effect_manager.apply_effect(character_id, "VULNERABLE", "GENERIC", intensity=value)
     
     # 应用额外行动点(增加行动次数)
     if "BONUS_ACTIONS" in turn_effects:
@@ -1376,11 +1456,9 @@ class WeakenAuraEffect(SpecialEffectInterface):
             target_id=user.id,
             effect_name="WEAKEN_AURA",
             category="SPECIAL",
-            intensity=0,  # 特殊效果不使用强度
-            stacks=0,  # 特殊效果不使用层数
-            duration=0,  # 使用自定义参数管理持续时间
             params={
                 "remaining_turns": duration,
+                "stage_persistent": False,
                 "effect_value": effect_value,
                 "aura_range": "all_enemies"
             }
@@ -1399,13 +1477,11 @@ def process_weaken_aura_turn_end(character_id, effect, battle_context):
     else:
         enemies = battle_context.char_manager.get_all_enemies()
     
-    # 对所有敌方施加虚弱和易伤(不使用通用效果，直接修改属性)
+    # 对所有敌方施加虚弱和易伤(调用标准的通用状态方法)
     for enemy in enemies:
         if enemy.current_hp > 0:  # 只对存活角色生效
-            # 临时攻击力减少
-            enemy.temp_attack_penalty = effect_value * 0.1  # 5级=50%减少
-            # 临时受伤增加
-            enemy.temp_damage_taken_multiplier = 1 + (effect_value * 0.1)  # 5级=+50%受伤
+            battle_context.effect_manager.apply_effect(enemy.id, "WEAKNESS", "GENERIC", intensity=effect_value)
+            battle_context.effect_manager.apply_effect(enemy.id, "VULNERABLE", "GENERIC", intensity=effect_value)
     
     # 减少剩余回合数
     params["remaining_turns"] -= 1
