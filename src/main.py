@@ -1,6 +1,11 @@
 import os
-import httpx
+import json
 import logging
+from datetime import time
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import httpx
 from dotenv import load_dotenv
 from telegram.ext import Application, CommandHandler, CallbackContext, ConversationHandler, MessageHandler, filters
 from telegram import Update
@@ -19,11 +24,116 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+logger = logging.getLogger(__name__)
 
 # 加载环境变量
 load_dotenv()
 
 token = os.getenv("TELEGRAM_TOKEN")
+
+# 每月部队房提醒配置
+REMINDER_TARGET_USERNAME = os.getenv("REMINDER_TARGET_USERNAME", "tsuyuneko").lstrip("@").lower()
+REMINDER_TARGET_USER_ID = os.getenv("REMINDER_TARGET_USER_ID")
+REMINDER_CHAT_ID = os.getenv("REMINDER_CHAT_ID")
+REMINDER_MESSAGE = os.getenv("REMINDER_MESSAGE", "记得上号保部队房")
+REMINDER_TIMEZONE = os.getenv("REMINDER_TIMEZONE", "Asia/Shanghai")
+REMINDER_STATE_FILE = Path(os.getenv("REMINDER_STATE_FILE", "reminder_state.json"))
+
+
+def _load_reminder_state() -> dict:
+    if not REMINDER_STATE_FILE.exists():
+        return {}
+    try:
+        return json.loads(REMINDER_STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.exception("读取提醒状态失败，将使用空状态")
+        return {}
+
+
+def _save_reminder_state(state: dict) -> None:
+    REMINDER_STATE_FILE.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _current_reminder_month() -> str:
+    now = __import__("datetime").datetime.now(ZoneInfo(REMINDER_TIMEZONE))
+    return now.strftime("%Y-%m")
+
+
+def _resolve_reminder_chat_id(state: dict):
+    chat_id = REMINDER_CHAT_ID or state.get("chat_id") or "@tsuyuneko"
+    if isinstance(chat_id, str) and chat_id.lstrip("-").isdigit():
+        return int(chat_id)
+    return chat_id
+
+
+def _is_target_user(update: Update) -> bool:
+    user = update.effective_user
+    if user is None:
+        return False
+    if REMINDER_TARGET_USER_ID and str(user.id) == REMINDER_TARGET_USER_ID:
+        return True
+    return (user.username or "").lower() == REMINDER_TARGET_USERNAME
+
+
+async def monthly_reminder_job(context: CallbackContext) -> None:
+    """每天 20:00 检查：本月未确认则发送提醒。"""
+    state = _load_reminder_state()
+    month_key = _current_reminder_month()
+
+    if state.get("month") != month_key:
+        state.update({
+            "month": month_key,
+            "started": False,
+            "acknowledged": False,
+        })
+
+    if state.get("acknowledged"):
+        _save_reminder_state(state)
+        return
+
+    chat_id = _resolve_reminder_chat_id(state)
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=REMINDER_MESSAGE)
+        state["started"] = True
+        _save_reminder_state(state)
+    except Exception:
+        logger.exception("发送每月部队房提醒失败，chat_id=%r", chat_id)
+        _save_reminder_state(state)
+
+
+async def reminder_acknowledge_message(update: Update, context: CallbackContext) -> None:
+    """目标用户本月收到提醒后回复任意消息，即暂停到下个月。"""
+    if not _is_target_user(update):
+        return
+
+    state = _load_reminder_state()
+    month_key = _current_reminder_month()
+
+    chat = update.effective_chat
+    if chat is not None:
+        state["chat_id"] = chat.id
+
+    if state.get("month") == month_key and state.get("started") and not state.get("acknowledged"):
+        state["acknowledged"] = True
+        _save_reminder_state(state)
+        if update.effective_message:
+            await update.effective_message.reply_text("已收到，本月不再提醒。")
+    else:
+        _save_reminder_state(state)
+
+
+def setup_monthly_reminder(app: Application) -> None:
+    if app.job_queue is None:
+        logger.error("JobQueue 未启用，请安装 python-telegram-bot[job-queue]")
+        return
+
+    reminder_time = time(hour=20, minute=0, tzinfo=ZoneInfo(REMINDER_TIMEZONE))
+    app.job_queue.run_daily(monthly_reminder_job, time=reminder_time, name="monthly_troop_room_reminder")
+    logger.info("已启用每月部队房提醒：目标 @%s，每天 %s 20:00 检查", REMINDER_TARGET_USERNAME, REMINDER_TIMEZONE)
+
 
 # 运行数据库迁移
 logging.info("开始运行数据库迁移...")
@@ -204,6 +314,10 @@ application.add_handler(get_attack_conv_handler())
 
 # 添加敌方攻击处理器
 application.add_handler(get_enemy_attack_conv_handler())
+
+# 添加提醒确认处理器；放在较后的 group，避免影响现有命令/会话逻辑
+application.add_handler(MessageHandler(filters.ALL, reminder_acknowledge_message), group=10)
+setup_monthly_reminder(application)
 
 # 启动Bot
 if __name__ == '__main__':
