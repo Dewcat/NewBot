@@ -1,0 +1,2649 @@
+{
+  "pack": {
+    "key": "dewbot.ruina_pages",
+    "name": "废墟图书馆·异想体书页集",
+    "version": "1.1.0",
+    "description": "移植自 Library of Ruina 的 28 个异想体书页小卡组（每组3页+携带被动），效果按本系统机制本地化改良。",
+    "requires": [
+      {
+        "key": "dewbot.base",
+        "min_version": "2.0.0"
+      }
+    ]
+  },
+  "effects": [],
+  "skills": [],
+  "characters": [],
+  "abnormalities": [
+    {
+      "key": "ruina.abn.chargirl",
+      "name": "焦化少女",
+      "description": "被火焰吞没的少女，仍在寻找抱着她的人。",
+      "carry_bonus": {
+        "key": "ruina.carry.chargirl",
+        "name": "火种",
+        "description": "携带生效：每回合开始有20%概率给随机敌人1级烧伤。",
+        "handler": "hook_apply_effect",
+        "params": {
+          "effect_key": "status.burn",
+          "intensity": 1,
+          "target": "RANDOM_ENEMY",
+          "events": [
+            "TURN_START"
+          ],
+          "chance": 0.2
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.chargirl.1",
+          "name": "余烬",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "命中时：对随机敌人施加2级「烧伤」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.burn",
+            "intensity": 2,
+            "target": "RANDOM_ENEMY",
+            "events": [
+              "ON_HIT"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.chargirl.2",
+          "name": "脚步",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "回合开始：灼热的脚印对随机敌人造成10点固定伤害，余温灼伤自身（1级烧伤）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_damage",
+                "params": {
+                  "amount": 10,
+                  "source": "焦灼的脚步",
+                  "target": "RANDOM_ENEMY",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.burn",
+                  "intensity": 1,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.chargirl.3",
+          "name": "残光",
+          "type": "BREAKDOWN",
+          "level": 1,
+          "description": "回合开始：借残光获得2级「强壮」，50%概率引火上身（自身2级烧伤）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.strength",
+                  "intensity": 2,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.burn",
+                  "intensity": 2,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ],
+                  "chance": 0.5
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.teddy",
+      "name": "快乐泰迪",
+      "description": "它只想再抱一次。抱得越紧，越难松开。",
+      "carry_bonus": {
+        "key": "ruina.carry.teddy",
+        "name": "拥抱",
+        "description": "携带生效：每回合开始为全体友方恢复1点生命。",
+        "handler": "hook_heal",
+        "params": {
+          "amount": 1,
+          "target": "ALL_FRIENDLY",
+          "events": [
+            "TURN_START"
+          ]
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.teddy.1",
+          "name": "思念的拥抱",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "命中时：30%概率追加4点固定伤害。",
+          "handler": "hook_damage",
+          "params": {
+            "amount": 4,
+            "source": "思念的拥抱",
+            "target": "RANDOM_ENEMY",
+            "events": [
+              "ON_HIT"
+            ],
+            "chance": 0.3
+          }
+        },
+        {
+          "key": "ruina.page.teddy.2",
+          "name": "幸福的记忆",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "每回合开始：积累1枚正面情感硬币。",
+          "handler": "emotion_shift",
+          "params": {
+            "polarity": "POSITIVE",
+            "amount": 1,
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.teddy.3",
+          "name": "表达爱意",
+          "type": "BREAKDOWN",
+          "level": 1,
+          "description": "每回合开始掷2级命运判定：五五开获得强壮或虚弱。",
+          "handler": "fortune_verdict",
+          "params": {
+            "intensity": 2,
+            "events": [
+              "TURN_START"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.fairy_festival",
+      "name": "精灵盛宴",
+      "description": "精灵们殷勤款待。账单稍后送达。",
+      "carry_bonus": {
+        "key": "ruina.carry.fairy_festival",
+        "name": "盛宴余韵",
+        "description": "携带生效：每回合结束为自身恢复2点生命。",
+        "handler": "hook_heal",
+        "params": {
+          "amount": 2,
+          "target": "SELF",
+          "events": [
+            "TURN_END"
+          ]
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.fairy_festival.1",
+          "name": "精灵的呵护",
+          "type": "BREAKDOWN",
+          "level": 1,
+          "description": "回合结束：精灵恢复5点生命——它们记下1枚负面情感硬币的账。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_END"
+            ],
+            "steps": [
+              {
+                "handler": "hook_heal",
+                "params": {
+                  "amount": 5,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "emotion_shift",
+                "params": {
+                  "polarity": "NEGATIVE",
+                  "amount": 1,
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.fairy_festival.2",
+          "name": "贪食",
+          "type": "AWAKENING",
+          "level": 2,
+          "description": "命中时：吸食伤口，为自身恢复3点生命。",
+          "handler": "hook_heal",
+          "params": {
+            "amount": 3,
+            "target": "SELF",
+            "events": [
+              "ON_HIT"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.fairy_festival.3",
+          "name": "猎食",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "回合开始：猎食本能获得2级「强壮」，代价是自伤3点。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.strength",
+                  "intensity": 2,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "hook_damage",
+                "params": {
+                  "amount": 3,
+                  "source": "猎食的代价",
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.queen_bee",
+      "name": "蜂后",
+      "description": "巢群的意志在嗡鸣中统一。",
+      "carry_bonus": {
+        "key": "ruina.carry.queen_bee",
+        "name": "蜂群相随",
+        "description": "携带生效：击杀敌人时积累1枚正面情感硬币。",
+        "handler": "emotion_shift",
+        "params": {
+          "polarity": "POSITIVE",
+          "amount": 1,
+          "events": [
+            "ON_KILL"
+          ]
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.queen_bee.1",
+          "name": "孢子",
+          "type": "AWAKENING",
+          "level": 2,
+          "description": "命中时：植入孢子，对随机敌人施加1级「中毒」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.poison",
+            "intensity": 1,
+            "target": "RANDOM_ENEMY",
+            "events": [
+              "ON_HIT"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.queen_bee.2",
+          "name": "工蜂",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "回合开始：蜂群啃噬随机敌人6点固定伤害，嗡鸣扰心（+1负面情感硬币）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_damage",
+                "params": {
+                  "amount": 6,
+                  "source": "工蜂群",
+                  "target": "RANDOM_ENEMY",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "emotion_shift",
+                "params": {
+                  "polarity": "NEGATIVE",
+                  "amount": 1,
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.queen_bee.3",
+          "name": "忠诚",
+          "type": "BREAKDOWN",
+          "level": 3,
+          "description": "回合开始：巢群狂热获得3级「强壮」，同时暴露破绽（自身1级易伤）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.strength",
+                  "intensity": 3,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.vulnerable",
+                  "intensity": 1,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.snow_white_apple",
+      "name": "白雪公主的苹果",
+      "description": "最红的那颗苹果，藏着最深的根。",
+      "carry_bonus": {
+        "key": "ruina.carry.snow_white_apple",
+        "name": "苹果的芬芳",
+        "description": "携带生效：每回合开始50%概率积累1枚正面情感硬币。",
+        "handler": "emotion_shift",
+        "params": {
+          "polarity": "POSITIVE",
+          "amount": 1,
+          "events": [
+            "TURN_START"
+          ],
+          "chance": 0.5
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.snow_white_apple.1",
+          "name": "绞杀藤",
+          "type": "AWAKENING",
+          "level": 2,
+          "description": "命中时：藤蔓绞缠，对随机敌人施加2级「流血」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.bleeding",
+            "intensity": 2,
+            "target": "RANDOM_ENEMY",
+            "events": [
+              "ON_HIT"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.snow_white_apple.2",
+          "name": "毒刺屏障",
+          "type": "AWAKENING",
+          "level": 3,
+          "description": "回合开始：荆棘环绕，自身获得6点强度「护盾」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.shield",
+            "intensity": 6,
+            "target": "SELF",
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.snow_white_apple.3",
+          "name": "恶意",
+          "type": "AWAKENING",
+          "level": 3,
+          "description": "回合开始：毒素弥漫，全体敌人获得2级「中毒」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.poison",
+            "intensity": 2,
+            "target": "ALL_ENEMY",
+            "events": [
+              "TURN_START"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.redhood_merc",
+      "name": "小红帽雇佣兵",
+      "description": "她的清单上只有一个名字，但顺路的都算。",
+      "carry_bonus": {
+        "key": "ruina.carry.redhood_merc",
+        "name": "猎人的嗅觉",
+        "description": "携带生效：击杀敌人时额外获得1点行动。",
+        "handler": "bonus_actions",
+        "params": {
+          "amount": 1,
+          "events": [
+            "ON_KILL"
+          ]
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.redhood_merc.1",
+          "name": "猎物",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "回合开始：锁定猎物，随机敌人获得1级「易伤」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.vulnerable",
+            "intensity": 1,
+            "target": "RANDOM_ENEMY",
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.redhood_merc.2",
+          "name": "复仇",
+          "type": "BREAKDOWN",
+          "level": 1,
+          "description": "受击后：50%概率反击4点固定伤害；后坐力35%概率令自身1级流血。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "ON_AFTER_DAMAGE"
+            ],
+            "steps": [
+              {
+                "handler": "hook_damage",
+                "params": {
+                  "amount": 4,
+                  "source": "复仇的枪口",
+                  "target": "RANDOM_ENEMY",
+                  "events": [
+                    "TURN_START"
+                  ],
+                  "chance": 0.5
+                }
+              },
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.bleeding",
+                  "intensity": 1,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ],
+                  "chance": 0.35
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.redhood_merc.3",
+          "name": "伤疤",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "回合开始：旧伤发狠获得2级「强壮」，伤口渗血自伤2点。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.strength",
+                  "intensity": 2,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "hook_damage",
+                "params": {
+                  "amount": 2,
+                  "source": "旧伤",
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.big_bad_wolf",
+      "name": "大坏狼",
+      "description": "它说它已经吃饱了。它说谎。",
+      "carry_bonus": {
+        "key": "ruina.carry.big_bad_wolf",
+        "name": "狼的鼻息",
+        "description": "携带生效：击杀敌人时恢复5点生命。",
+        "handler": "hook_heal",
+        "params": {
+          "amount": 5,
+          "target": "SELF",
+          "events": [
+            "ON_KILL"
+          ]
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.big_bad_wolf.1",
+          "name": "掠食本能",
+          "type": "AWAKENING",
+          "level": 2,
+          "description": "命中时：50%概率撕开伤口，随机敌人获得2级「流血」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.bleeding",
+            "intensity": 2,
+            "target": "RANDOM_ENEMY",
+            "events": [
+              "ON_HIT"
+            ],
+            "chance": 0.5
+          }
+        },
+        {
+          "key": "ruina.page.big_bad_wolf.2",
+          "name": "凶残利爪",
+          "type": "BREAKDOWN",
+          "level": 1,
+          "description": "回合开始：利爪出鞘获得1级「强壮」，50%概率划伤自己（1级流血）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.strength",
+                  "intensity": 1,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.bleeding",
+                  "intensity": 1,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ],
+                  "chance": 0.5
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.big_bad_wolf.3",
+          "name": "狼的角色",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "每回合开始：入戏渐深，积累1枚正面情感硬币。",
+          "handler": "emotion_shift",
+          "params": {
+            "polarity": "POSITIVE",
+            "amount": 1,
+            "events": [
+              "TURN_START"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.smiling_corpses",
+      "name": "微笑的尸山",
+      "description": "它们笑着，因为再没有什么可失去。",
+      "carry_bonus": {
+        "key": "ruina.carry.smiling_corpses",
+        "name": "尸臭",
+        "description": "携带生效：每回合开始30%概率令随机敌人获得1级「虚弱」。",
+        "handler": "hook_apply_effect",
+        "params": {
+          "effect_key": "status.weakness",
+          "intensity": 1,
+          "target": "RANDOM_ENEMY",
+          "events": [
+            "TURN_START"
+          ],
+          "chance": 0.3
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.smiling_corpses.1",
+          "name": "死尸吸收",
+          "type": "AWAKENING",
+          "level": 2,
+          "description": "击杀敌人时：吸收尸体，恢复8点生命。",
+          "handler": "hook_heal",
+          "params": {
+            "amount": 8,
+            "target": "SELF",
+            "events": [
+              "ON_KILL"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.smiling_corpses.2",
+          "name": "尸体在笑",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "回合结束：笑声蔓延，全体敌人各受3点固定伤害；刺耳笑声+1负面情感硬币。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_END"
+            ],
+            "steps": [
+              {
+                "handler": "hook_damage",
+                "params": {
+                  "amount": 3,
+                  "source": "尸山的笑声",
+                  "target": "ALL_ENEMY",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "emotion_shift",
+                "params": {
+                  "polarity": "NEGATIVE",
+                  "amount": 1,
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.smiling_corpses.3",
+          "name": "尸山",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "回合开始：尸墙给予4点强度「护盾」，尸臭熏染（50%概率自身1级虚弱）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.shield",
+                  "intensity": 4,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.weakness",
+                  "intensity": 1,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ],
+                  "chance": 0.5
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.nosferatu",
+      "name": "诺斯费拉图",
+      "description": "古老的渴，永远差一口。",
+      "carry_bonus": {
+        "key": "ruina.carry.nosferatu",
+        "name": "血之气息",
+        "description": "携带生效：命中时25%概率吸血恢复2点生命。",
+        "handler": "hook_heal",
+        "params": {
+          "amount": 2,
+          "target": "SELF",
+          "events": [
+            "ON_HIT"
+          ],
+          "chance": 0.25
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.nosferatu.1",
+          "name": "恐水症",
+          "type": "BREAKDOWN",
+          "level": 1,
+          "description": "每回合开始掷2级命运判定。",
+          "handler": "fortune_verdict",
+          "params": {
+            "intensity": 2,
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.nosferatu.2",
+          "name": "红酒",
+          "type": "AWAKENING",
+          "level": 2,
+          "description": "命中时：浅酌一口，恢复3点生命。",
+          "handler": "hook_heal",
+          "params": {
+            "amount": 3,
+            "target": "SELF",
+            "events": [
+              "ON_HIT"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.nosferatu.3",
+          "name": "吸血",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "命中时：随机敌人获得1级「流血」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.bleeding",
+            "intensity": 1,
+            "target": "RANDOM_ENEMY",
+            "events": [
+              "ON_HIT"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.nothing_there",
+      "name": "一无所有",
+      "description": "它学得很像了。真的很像了。",
+      "carry_bonus": {
+        "key": "ruina.carry.nothing_there",
+        "name": "模仿",
+        "description": "携带生效：每回合开始50%概率获得1级「强壮」。",
+        "handler": "hook_apply_effect",
+        "params": {
+          "effect_key": "status.strength",
+          "intensity": 1,
+          "target": "SELF",
+          "events": [
+            "TURN_START"
+          ],
+          "chance": 0.5
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.nothing_there.1",
+          "name": "咕德拜",
+          "type": "AWAKENING",
+          "level": 3,
+          "description": "回合开始：告别伪装，自身获得3级「强壮」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.strength",
+            "intensity": 3,
+            "target": "SELF",
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.nothing_there.2",
+          "name": "哈啰？",
+          "type": "AWAKENING",
+          "level": 3,
+          "description": "回合开始：它打了个招呼——随机敌人受到12点固定伤害。",
+          "handler": "hook_damage",
+          "params": {
+            "amount": 12,
+            "source": "哈啰？",
+            "target": "RANDOM_ENEMY",
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.nothing_there.3",
+          "name": "躯壳",
+          "type": "AWAKENING",
+          "level": 3,
+          "description": "回合开始：披上躯壳，自身获得8点强度「护盾」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.shield",
+            "intensity": 8,
+            "target": "SELF",
+            "events": [
+              "TURN_START"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.scarecrow",
+      "name": "求知的稻草人",
+      "description": "它想要一颗聪明的脑袋。谁的都行。",
+      "carry_bonus": {
+        "key": "ruina.carry.scarecrow",
+        "name": "求知欲",
+        "description": "携带生效：每回合开始积累1枚正面情感硬币。",
+        "handler": "emotion_shift",
+        "params": {
+          "polarity": "POSITIVE",
+          "amount": 1,
+          "events": [
+            "TURN_START"
+          ]
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.scarecrow.1",
+          "name": "被扯出的智慧",
+          "type": "BREAKDOWN",
+          "level": 1,
+          "description": "每回合开始掷2级命运判定。",
+          "handler": "fortune_verdict",
+          "params": {
+            "intensity": 2,
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.scarecrow.2",
+          "name": "收割",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "击杀敌人时：收获领悟，积累2枚正面情感硬币。",
+          "handler": "emotion_shift",
+          "params": {
+            "polarity": "POSITIVE",
+            "amount": 2,
+            "events": [
+              "ON_KILL"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.scarecrow.3",
+          "name": "钉耙",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "命中时：40%概率令随机敌人获得1级「流血」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.bleeding",
+            "intensity": 1,
+            "target": "RANDOM_ENEMY",
+            "events": [
+              "ON_HIT"
+            ],
+            "chance": 0.4
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.woodcutter",
+      "name": "热心的樵夫",
+      "description": "他想要一颗温暖的心。他见谁都这么说。",
+      "carry_bonus": {
+        "key": "ruina.carry.woodcutter",
+        "name": "温热的斧刃",
+        "description": "携带生效：命中时20%概率追加2点固定伤害。",
+        "handler": "hook_damage",
+        "params": {
+          "amount": 2,
+          "source": "温热的斧刃",
+          "target": "RANDOM_ENEMY",
+          "events": [
+            "ON_HIT"
+          ],
+          "chance": 0.2
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.woodcutter.1",
+          "name": "温暖的心",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "回合结束：渴望的心跳恢复4点生命，空洞加深（+1负面情感硬币）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_END"
+            ],
+            "steps": [
+              {
+                "handler": "hook_heal",
+                "params": {
+                  "amount": 4,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "emotion_shift",
+                "params": {
+                  "polarity": "NEGATIVE",
+                  "amount": 1,
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.woodcutter.2",
+          "name": "心脏",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "回合开始：恢复3点生命。",
+          "handler": "hook_heal",
+          "params": {
+            "amount": 3,
+            "target": "SELF",
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.woodcutter.3",
+          "name": "伐木",
+          "type": "BREAKDOWN",
+          "level": 1,
+          "description": "回合开始：挥斧获得1级「强壮」，50%概率斧刃反震（+1负面情感硬币）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.strength",
+                  "intensity": 1,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "emotion_shift",
+                "params": {
+                  "polarity": "NEGATIVE",
+                  "amount": 1,
+                  "events": [
+                    "TURN_START"
+                  ],
+                  "chance": 0.5
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.homeward",
+      "name": "归家的路途",
+      "description": "路很长，还好不是一个人走。",
+      "carry_bonus": {
+        "key": "ruina.carry.homeward",
+        "name": "同伴的体温",
+        "description": "携带生效：每回合结束为全体友方恢复1点生命。",
+        "handler": "hook_heal",
+        "params": {
+          "amount": 1,
+          "target": "ALL_FRIENDLY",
+          "events": [
+            "TURN_END"
+          ]
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.homeward.1",
+          "name": "勇气",
+          "type": "BREAKDOWN",
+          "level": 1,
+          "description": "回合开始：借来的勇气获得1级「强壮」，50%概率想家（+1负面情感硬币）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.strength",
+                  "intensity": 1,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "emotion_shift",
+                "params": {
+                  "polarity": "NEGATIVE",
+                  "amount": 1,
+                  "events": [
+                    "TURN_START"
+                  ],
+                  "chance": 0.5
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.homeward.2",
+          "name": "家",
+          "type": "AWAKENING",
+          "level": 2,
+          "description": "回合结束：想起家的方向，恢复5点生命。",
+          "handler": "hook_heal",
+          "params": {
+            "amount": 5,
+            "target": "SELF",
+            "events": [
+              "TURN_END"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.homeward.3",
+          "name": "同行之路",
+          "type": "AWAKENING",
+          "level": 2,
+          "description": "回合开始：全体友方获得1级「守护」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.guard",
+            "intensity": 1,
+            "target": "ALL_FRIENDLY",
+            "events": [
+              "TURN_START"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.ozma",
+      "name": "奥兹玛",
+      "description": "旧日的君主还记得加冕时的钟声。",
+      "carry_bonus": {
+        "key": "ruina.carry.ozma",
+        "name": "旧日残响",
+        "description": "携带生效：每回合开始50%概率积累1枚正面情感硬币。",
+        "handler": "emotion_shift",
+        "params": {
+          "polarity": "POSITIVE",
+          "amount": 1,
+          "events": [
+            "TURN_START"
+          ],
+          "chance": 0.5
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.ozma.1",
+          "name": "旧日之力",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "回合开始：借取旧日之力获得2级「强壮」，副作用+1负面情感硬币。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.strength",
+                  "intensity": 2,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "emotion_shift",
+                "params": {
+                  "polarity": "NEGATIVE",
+                  "amount": 1,
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.ozma.2",
+          "name": "遗忘",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "回合开始：夺走随机敌人的力量（1级虚弱），自己也忘了些什么（+1负面情感硬币）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.weakness",
+                  "intensity": 1,
+                  "target": "RANDOM_ENEMY",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "emotion_shift",
+                "params": {
+                  "polarity": "NEGATIVE",
+                  "amount": 1,
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.ozma.3",
+          "name": "生命之粉",
+          "type": "BREAKDOWN",
+          "level": 3,
+          "description": "回合开始：奇迹粉末为全体友方恢复6点生命，反噬自伤4点。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_heal",
+                "params": {
+                  "amount": 6,
+                  "target": "ALL_FRIENDLY",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "hook_damage",
+                "params": {
+                  "amount": 4,
+                  "source": "生命之粉的反噬",
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.lying_adult",
+      "name": "说谎的大人",
+      "description": "翡翠城的每一面墙都是绿的，只要你戴着眼镜。",
+      "carry_bonus": {
+        "key": "ruina.carry.lying_adult",
+        "name": "花言巧语",
+        "description": "携带生效：每回合开始40%概率令随机敌人获得1级「虚弱」。",
+        "handler": "hook_apply_effect",
+        "params": {
+          "effect_key": "status.weakness",
+          "intensity": 1,
+          "target": "RANDOM_ENEMY",
+          "events": [
+            "TURN_START"
+          ],
+          "chance": 0.4
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.lying_adult.1",
+          "name": "翡翠",
+          "type": "AWAKENING",
+          "level": 2,
+          "description": "回合开始：翡翠假面，自身获得5点强度「护盾」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.shield",
+            "intensity": 5,
+            "target": "SELF",
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.lying_adult.2",
+          "name": "虚假的礼物",
+          "type": "BREAKDOWN",
+          "level": 3,
+          "description": "每回合开始掷4级命运判定：大赌大赢，也可能大输。",
+          "handler": "fortune_verdict",
+          "params": {
+            "intensity": 4,
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.lying_adult.3",
+          "name": "巫术",
+          "type": "AWAKENING",
+          "level": 3,
+          "description": "回合开始：全体敌人获得2级「易伤」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.vulnerable",
+            "intensity": 2,
+            "target": "ALL_ENEMY",
+            "events": [
+              "TURN_START"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.big_bird",
+      "name": "大鸟",
+      "description": "它睁着灯一样的眼睛，等着迷路的人。",
+      "carry_bonus": {
+        "key": "ruina.carry.big_bird",
+        "name": "长明之目",
+        "description": "携带生效：每回合开始30%概率获得1级「守护」。",
+        "handler": "hook_apply_effect",
+        "params": {
+          "effect_key": "status.guard",
+          "intensity": 1,
+          "target": "SELF",
+          "events": [
+            "TURN_START"
+          ],
+          "chance": 0.3
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.big_bird.1",
+          "name": "监视之眼",
+          "type": "BREAKDOWN",
+          "level": 1,
+          "description": "回合开始：凝视随机敌人（1级易伤），灯光刺痛自己（50%概率+1负面情感硬币）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.vulnerable",
+                  "intensity": 1,
+                  "target": "RANDOM_ENEMY",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "emotion_shift",
+                "params": {
+                  "polarity": "NEGATIVE",
+                  "amount": 1,
+                  "events": [
+                    "TURN_START"
+                  ],
+                  "chance": 0.5
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.big_bird.2",
+          "name": "永燃灯",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "回合开始：50%概率获得1级「强壮」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.strength",
+            "intensity": 1,
+            "target": "SELF",
+            "events": [
+              "TURN_START"
+            ],
+            "chance": 0.5
+          }
+        },
+        {
+          "key": "ruina.page.big_bird.3",
+          "name": "救赎",
+          "type": "AWAKENING",
+          "level": 2,
+          "description": "击杀敌人时：吞下即是拯救，恢复6点生命。",
+          "handler": "hook_heal",
+          "params": {
+            "amount": 6,
+            "target": "SELF",
+            "events": [
+              "ON_KILL"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.punishing_bird",
+      "name": "惩戒鸟",
+      "description": "小小的鸟，记着所有的错。",
+      "carry_bonus": {
+        "key": "ruina.carry.punishing_bird",
+        "name": "细语罪状",
+        "description": "携带生效：暴击时积累1枚正面情感硬币。",
+        "handler": "emotion_shift",
+        "params": {
+          "polarity": "POSITIVE",
+          "amount": 1,
+          "events": [
+            "ON_CRIT"
+          ]
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.punishing_bird.1",
+          "name": "惩戒",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "命中时：35%概率追加5点惩戒伤害；惩戒同样烧灼持有者（20%概率自身1级烧伤）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "ON_HIT"
+            ],
+            "steps": [
+              {
+                "handler": "hook_damage",
+                "params": {
+                  "amount": 5,
+                  "source": "惩戒之鞭",
+                  "target": "RANDOM_ENEMY",
+                  "events": [
+                    "TURN_START"
+                  ],
+                  "chance": 0.35
+                }
+              },
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.burn",
+                  "intensity": 1,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ],
+                  "chance": 0.2
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.punishing_bird.2",
+          "name": "责罚之喙",
+          "type": "AWAKENING",
+          "level": 2,
+          "description": "暴击时：啄出伤口，随机敌人获得2级「流血」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.bleeding",
+            "intensity": 2,
+            "target": "RANDOM_ENEMY",
+            "events": [
+              "ON_CRIT"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.punishing_bird.3",
+          "name": "小翅儿扑扑",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "每回合开始：积累1枚正面情感硬币。",
+          "handler": "emotion_shift",
+          "params": {
+            "polarity": "POSITIVE",
+            "amount": 1,
+            "events": [
+              "TURN_START"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.judgement_bird",
+      "name": "审判鸟",
+      "description": "天秤两端，都是罪。",
+      "carry_bonus": {
+        "key": "ruina.carry.judgement_bird",
+        "name": "罪的裁量",
+        "description": "携带生效：每回合开始50%概率掷1级命运判定。",
+        "handler": "fortune_verdict",
+        "params": {
+          "intensity": 1,
+          "events": [
+            "TURN_START"
+          ],
+          "chance": 0.5
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.judgement_bird.1",
+          "name": "罪孽的分量",
+          "type": "BREAKDOWN",
+          "level": 1,
+          "description": "回合开始：天秤两端都是罪——随机敌人与自身各获得1级「易伤」。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.vulnerable",
+                  "intensity": 1,
+                  "target": "RANDOM_ENEMY",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.vulnerable",
+                  "intensity": 1,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.judgement_bird.2",
+          "name": "审判",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "回合开始：审判落下，随机敌人受8点固定伤害；天秤反坐自伤3点。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_damage",
+                "params": {
+                  "amount": 8,
+                  "source": "审判之秤",
+                  "target": "RANDOM_ENEMY",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "hook_damage",
+                "params": {
+                  "amount": 3,
+                  "source": "天秤的反坐",
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.judgement_bird.3",
+          "name": "歪斜的天秤",
+          "type": "AWAKENING",
+          "level": 2,
+          "description": "每回合开始掷3级命运判定。",
+          "handler": "fortune_verdict",
+          "params": {
+            "intensity": 3,
+            "events": [
+              "TURN_START"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.apocalypse_bird",
+      "name": "终末鸟",
+      "description": "为了守护森林，它成为了黑夜本身。",
+      "carry_bonus": {
+        "key": "ruina.carry.apocalypse_bird",
+        "name": "森林的阴影",
+        "description": "携带生效：每回合开始25%概率令随机敌人获得1级「虚弱」。",
+        "handler": "hook_apply_effect",
+        "params": {
+          "effect_key": "status.weakness",
+          "intensity": 1,
+          "target": "RANDOM_ENEMY",
+          "events": [
+            "TURN_START"
+          ],
+          "chance": 0.25
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.apocalypse_bird.1",
+          "name": "长臂",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "命中时：30%概率借得长臂之力，获得1级「强壮」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.strength",
+            "intensity": 1,
+            "target": "SELF",
+            "events": [
+              "ON_HIT"
+            ],
+            "chance": 0.3
+          }
+        },
+        {
+          "key": "ruina.page.apocalypse_bird.2",
+          "name": "小喙",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "回合开始：万魔之喙啄食全体敌人各3点；黑夜蚕食心智（+1负面情感硬币）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_damage",
+                "params": {
+                  "amount": 3,
+                  "source": "万魔之喙",
+                  "target": "ALL_ENEMY",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "emotion_shift",
+                "params": {
+                  "polarity": "NEGATIVE",
+                  "amount": 1,
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.apocalypse_bird.3",
+          "name": "大怪兽",
+          "type": "BREAKDOWN",
+          "level": 3,
+          "description": "回合开始：化作终末之形获得4级「强壮」，庞躯破绽尽显（自身2级易伤）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.strength",
+                  "intensity": 4,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.vulnerable",
+                  "intensity": 2,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.pierced_heaven",
+      "name": "渗透天堂",
+      "description": "羽毛落下的地方，愿望生根。",
+      "carry_bonus": {
+        "key": "ruina.carry.pierced_heaven",
+        "name": "羽落之愿",
+        "description": "携带生效：每回合结束50%概率恢复2点生命。",
+        "handler": "hook_heal",
+        "params": {
+          "amount": 2,
+          "target": "SELF",
+          "events": [
+            "TURN_END"
+          ],
+          "chance": 0.5
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.pierced_heaven.1",
+          "name": "萎缩的血翼",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "回合开始：残翼展开，自身获得1级「呼吸法」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.breathing",
+            "intensity": 1,
+            "target": "SELF",
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.pierced_heaven.2",
+          "name": "他人的视线",
+          "type": "BREAKDOWN",
+          "level": 1,
+          "description": "回合开始：视线化作动力（1级强壮），也化作压力（+1负面情感硬币）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.strength",
+                  "intensity": 1,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "emotion_shift",
+                "params": {
+                  "polarity": "NEGATIVE",
+                  "amount": 1,
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.pierced_heaven.3",
+          "name": "关注与集中",
+          "type": "BREAKDOWN",
+          "level": 1,
+          "description": "每回合开始掷2级命运判定。",
+          "handler": "fortune_verdict",
+          "params": {
+            "intensity": 2,
+            "events": [
+              "TURN_START"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.price_of_silence",
+      "name": "沉默的代价",
+      "description": "第十三声钟响之后，没有人再说话。",
+      "carry_bonus": {
+        "key": "ruina.carry.price_of_silence",
+        "name": "报时的余音",
+        "description": "携带生效：每回合结束积累1枚正面情感硬币。",
+        "handler": "emotion_shift",
+        "params": {
+          "polarity": "POSITIVE",
+          "amount": 1,
+          "events": [
+            "TURN_END"
+          ]
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.price_of_silence.1",
+          "name": "时间",
+          "type": "BREAKDOWN",
+          "level": 1,
+          "description": "回合开始：偷来一秒（+1行动），时针的压迫+1负面情感硬币。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "bonus_actions",
+                "params": {
+                  "amount": 1,
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "emotion_shift",
+                "params": {
+                  "polarity": "NEGATIVE",
+                  "amount": 1,
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.price_of_silence.2",
+          "name": "第十三声钟响",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "回合开始：50%概率偷来一秒，额外获得1点行动。",
+          "handler": "bonus_actions",
+          "params": {
+            "amount": 1,
+            "chance": 0.5,
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.price_of_silence.3",
+          "name": "沉默",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "回合开始：噤声随机敌人（1级麻痹），寂静同样压抑（+1负面情感硬币）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.paralysis",
+                  "intensity": 1,
+                  "target": "RANDOM_ENEMY",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "emotion_shift",
+                "params": {
+                  "polarity": "NEGATIVE",
+                  "amount": 1,
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.blue_star",
+      "name": "碧蓝新星",
+      "description": "它歌唱的时候，请不要抬头。",
+      "carry_bonus": {
+        "key": "ruina.carry.blue_star",
+        "name": "星光指引",
+        "description": "携带生效：每回合开始50%概率积累1枚正面情感硬币。",
+        "handler": "emotion_shift",
+        "params": {
+          "polarity": "POSITIVE",
+          "amount": 1,
+          "events": [
+            "TURN_START"
+          ],
+          "chance": 0.5
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.blue_star.1",
+          "name": "殉教",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "回合结束：殉教之光灼烧全体敌人各3点，火焰亦灼己身2点。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_END"
+            ],
+            "steps": [
+              {
+                "handler": "hook_damage",
+                "params": {
+                  "amount": 3,
+                  "source": "殉教之光",
+                  "target": "ALL_ENEMY",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "hook_damage",
+                "params": {
+                  "amount": 2,
+                  "source": "殉教之火",
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.blue_star.2",
+          "name": "赎罪",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "回合结束：全体友方恢复3点生命，罪感沉积（+1负面情感硬币）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_END"
+            ],
+            "steps": [
+              {
+                "handler": "hook_heal",
+                "params": {
+                  "amount": 3,
+                  "target": "ALL_FRIENDLY",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "emotion_shift",
+                "params": {
+                  "polarity": "NEGATIVE",
+                  "amount": 1,
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.blue_star.3",
+          "name": "思念之声",
+          "type": "AWAKENING",
+          "level": 2,
+          "description": "回合开始：全体友方获得1级「守护」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.guard",
+            "intensity": 1,
+            "target": "ALL_FRIENDLY",
+            "events": [
+              "TURN_START"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.white_night",
+      "name": "白夜",
+      "description": "它张开十二对翅膀，宣告奇迹。",
+      "carry_bonus": {
+        "key": "ruina.carry.white_night",
+        "name": "神迹之翼",
+        "description": "携带生效：每回合结束为全体友方恢复2点生命。",
+        "handler": "hook_heal",
+        "params": {
+          "amount": 2,
+          "target": "ALL_FRIENDLY",
+          "events": [
+            "TURN_END"
+          ]
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.white_night.1",
+          "name": "洗礼",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "回合开始：受洗者获得4点强度「护盾」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.shield",
+            "intensity": 4,
+            "target": "SELF",
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.white_night.2",
+          "name": "降临",
+          "type": "AWAKENING",
+          "level": 2,
+          "description": "回合结束：神迹降临，全体友方恢复6点生命。",
+          "handler": "hook_heal",
+          "params": {
+            "amount": 6,
+            "target": "ALL_FRIENDLY",
+            "events": [
+              "TURN_END"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.white_night.3",
+          "name": "使徒",
+          "type": "AWAKENING",
+          "level": 3,
+          "description": "回合开始：全体友方获得2级「强壮」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.strength",
+            "intensity": 2,
+            "target": "ALL_FRIENDLY",
+            "events": [
+              "TURN_START"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.blood_bath",
+      "name": "血浴缸",
+      "description": "泡进去的人都说舒服。没有人出来反驳。",
+      "carry_bonus": {
+        "key": "ruina.carry.blood_bath",
+        "name": "血之滋养",
+        "description": "携带生效：击杀敌人时恢复4点生命。",
+        "handler": "hook_heal",
+        "params": {
+          "amount": 4,
+          "target": "SELF",
+          "events": [
+            "ON_KILL"
+          ]
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.blood_bath.1",
+          "name": "鲜血",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "命中时：放血（随机敌人2级流血），血雾沾身（30%概率自身1级流血）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "ON_HIT"
+            ],
+            "steps": [
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.bleeding",
+                  "intensity": 2,
+                  "target": "RANDOM_ENEMY",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.bleeding",
+                  "intensity": 1,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ],
+                  "chance": 0.3
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.blood_bath.2",
+          "name": "疤痕",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "回合开始：旧疤硬化，自身获得1级「守护」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.guard",
+            "intensity": 1,
+            "target": "SELF",
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.blood_bath.3",
+          "name": "瘆白之手",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "命中时：30%概率攥住敌人，令其获得1级「虚弱」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.weakness",
+            "intensity": 1,
+            "target": "RANDOM_ENEMY",
+            "events": [
+              "ON_HIT"
+            ],
+            "chance": 0.3
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.longing_heart",
+      "name": "渴望之心",
+      "description": "它替你跳动，也替你渴望。",
+      "carry_bonus": {
+        "key": "ruina.carry.longing_heart",
+        "name": "悸动",
+        "description": "携带生效：每回合开始50%概率积累1枚正面情感硬币。",
+        "handler": "emotion_shift",
+        "params": {
+          "polarity": "POSITIVE",
+          "amount": 1,
+          "events": [
+            "TURN_START"
+          ],
+          "chance": 0.5
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.longing_heart.1",
+          "name": "脉动",
+          "type": "BREAKDOWN",
+          "level": 1,
+          "description": "回合开始：脉动带来1级「呼吸法」，心悸+1负面情感硬币。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.breathing",
+                  "intensity": 1,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "emotion_shift",
+                "params": {
+                  "polarity": "NEGATIVE",
+                  "amount": 1,
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.longing_heart.2",
+          "name": "渴望",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "回合开始：50%概率获得1级「强壮」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.strength",
+            "intensity": 1,
+            "target": "SELF",
+            "events": [
+              "TURN_START"
+            ],
+            "chance": 0.5
+          }
+        },
+        {
+          "key": "ruina.page.longing_heart.3",
+          "name": "剧烈搏动",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "回合开始：狂奔的心跳+1行动，过速自伤2点。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "bonus_actions",
+                "params": {
+                  "amount": 1,
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "hook_damage",
+                "params": {
+                  "amount": 2,
+                  "source": "过速的心跳",
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.pinocchio",
+      "name": "匹诺曹",
+      "description": "它在学做一个真正的人。从说谎开始。",
+      "carry_bonus": {
+        "key": "ruina.carry.pinocchio",
+        "name": "木偶的幸运",
+        "description": "携带生效：每回合开始50%概率掷1级命运判定。",
+        "handler": "fortune_verdict",
+        "params": {
+          "intensity": 1,
+          "events": [
+            "TURN_START"
+          ],
+          "chance": 0.5
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.pinocchio.1",
+          "name": "学习",
+          "type": "AWAKENING",
+          "level": 2,
+          "description": "每回合开始：学到新东西，积累2枚正面情感硬币。",
+          "handler": "emotion_shift",
+          "params": {
+            "polarity": "POSITIVE",
+            "amount": 2,
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.pinocchio.2",
+          "name": "谎言",
+          "type": "BREAKDOWN",
+          "level": 1,
+          "description": "每回合开始掷2级命运判定。",
+          "handler": "fortune_verdict",
+          "params": {
+            "intensity": 2,
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.pinocchio.3",
+          "name": "好奇",
+          "type": "BREAKDOWN",
+          "level": 1,
+          "description": "回合开始：什么都想学——同时积累1枚正面与1枚负面情感硬币。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "emotion_shift",
+                "params": {
+                  "polarity": "POSITIVE",
+                  "amount": 1,
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "emotion_shift",
+                "params": {
+                  "polarity": "NEGATIVE",
+                  "amount": 1,
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.snow_queen",
+      "name": "冰雪女皇",
+      "description": "她的吻让人再也不怕冷。",
+      "carry_bonus": {
+        "key": "ruina.carry.snow_queen",
+        "name": "凛冽余寒",
+        "description": "携带生效：每回合开始30%概率令随机敌人获得1级「麻痹」。",
+        "handler": "hook_apply_effect",
+        "params": {
+          "effect_key": "status.paralysis",
+          "intensity": 1,
+          "target": "RANDOM_ENEMY",
+          "events": [
+            "TURN_START"
+          ],
+          "chance": 0.3
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.snow_queen.1",
+          "name": "凌剑",
+          "type": "AWAKENING",
+          "level": 2,
+          "description": "回合开始：冰晶成刃，自身获得2级「强壮」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.strength",
+            "intensity": 2,
+            "target": "SELF",
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.snow_queen.2",
+          "name": "亲吻",
+          "type": "AWAKENING",
+          "level": 3,
+          "description": "回合开始：冻结之吻，随机敌人获得2级「麻痹」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.paralysis",
+            "intensity": 2,
+            "target": "RANDOM_ENEMY",
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.snow_queen.3",
+          "name": "雪暴",
+          "type": "BREAKDOWN",
+          "level": 3,
+          "description": "回合开始：雪暴席卷全体敌人各5点；50%概率冻僵自己（1级麻痹）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_damage",
+                "params": {
+                  "amount": 5,
+                  "source": "雪暴",
+                  "target": "ALL_ENEMY",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.paralysis",
+                  "intensity": 1,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ],
+                  "chance": 0.5
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "ruina.abn.silent_maiden",
+      "name": "噤默处子",
+      "description": "她不出声，钉子替她说。",
+      "carry_bonus": {
+        "key": "ruina.carry.silent_maiden",
+        "name": "无声守望",
+        "description": "携带生效：每回合结束50%概率获得1级「守护」。",
+        "handler": "hook_apply_effect",
+        "params": {
+          "effect_key": "status.guard",
+          "intensity": 1,
+          "target": "SELF",
+          "events": [
+            "TURN_END"
+          ],
+          "chance": 0.5
+        }
+      },
+      "pages": [
+        {
+          "key": "ruina.page.silent_maiden.1",
+          "name": "钉与锤",
+          "type": "AWAKENING",
+          "level": 2,
+          "description": "命中时：40%概率钉住敌人，令其获得1级「麻痹」。",
+          "handler": "hook_apply_effect",
+          "params": {
+            "effect_key": "status.paralysis",
+            "intensity": 1,
+            "target": "RANDOM_ENEMY",
+            "events": [
+              "ON_HIT"
+            ],
+            "chance": 0.4
+          }
+        },
+        {
+          "key": "ruina.page.silent_maiden.2",
+          "name": "目光",
+          "type": "BREAKDOWN",
+          "level": 3,
+          "description": "回合开始：凝视令全体敌人2级「易伤」，直视深渊者自身也1级「易伤」。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.vulnerable",
+                  "intensity": 2,
+                  "target": "ALL_ENEMY",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.vulnerable",
+                  "intensity": 1,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "ruina.page.silent_maiden.3",
+          "name": "负罪感",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "回合开始：罪疚化为力量（2级强壮），沉重难当（+2负面情感硬币）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.strength",
+                  "intensity": 2,
+                  "target": "SELF",
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              },
+              {
+                "handler": "emotion_shift",
+                "params": {
+                  "polarity": "NEGATIVE",
+                  "amount": 2,
+                  "events": [
+                    "TURN_START"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "manager_skills": []
+}

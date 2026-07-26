@@ -1,0 +1,140 @@
+{
+  "pack": {
+    "key": "dewbot.base",
+    "name": "Dewbot 基础规则包",
+    "version": "2.0.0",
+    "description": "提供规则状态、通用训练技能和普通单位生成兼容定义；五名核心角色本体由核心角色包登记。"
+  },
+  "effects": [
+    {"key": "status.strength", "name": "强壮", "category": "GENERIC", "icon": "💪"},
+    {"key": "status.weakness", "name": "虚弱", "category": "GENERIC", "icon": "◈"},
+    {"key": "status.guard", "name": "守护", "category": "GENERIC", "icon": "☂"},
+    {"key": "status.shield", "name": "护盾", "category": "GENERIC", "icon": "▣"},
+    {"key": "status.vulnerable", "name": "易伤", "category": "GENERIC", "icon": "◇"},
+    {"key": "status.paralysis", "name": "麻痹", "category": "GENERIC", "icon": "⌁"},
+    {"key": "status.burn", "name": "烧伤", "category": "REGULAR", "icon": "🔥"},
+    {"key": "status.poison", "name": "中毒", "category": "REGULAR", "icon": "☠"},
+    {"key": "status.bleeding", "name": "流血", "category": "REGULAR", "icon": "🩸"},
+    {"key": "status.rupture", "name": "破裂", "category": "REGULAR", "icon": "✦"},
+    {"key": "status.breathing", "name": "呼吸法", "category": "REGULAR", "icon": "◉"},
+    {"key": "status.hardblood", "name": "硬血", "category": "SPECIAL", "icon": "◆", "handler": "accumulate_resource", "default_params": {"persist": true, "lifecycle_scope": "BATTLE", "amount": 0, "resource_key": "status.hardblood", "events": []}},
+    {"key": "instant.bonus_actions", "name": "额外行动点", "category": "INSTANT", "handler": "bonus_actions"}
+  ],
+  "skills": [
+    {
+      "key": "skill.common.strike",
+      "name": "试作斩击",
+      "description": "训练用的直接伤害行为。",
+      "type": "NORMAL",
+      "cooldown": 0,
+      "emotion": 0,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {"key": "behavior.common.strike.damage", "timing": "ON", "effect_type": "DAMAGE", "value": "1d8+4"}
+      ]
+    },
+    {
+      "key": "skill.common.guard",
+      "name": "记录防壁",
+      "description": "本回合获得护盾；回合终了后清除。",
+      "type": "NORMAL",
+      "cooldown": 1,
+      "emotion": 0,
+      "target_scope": "SELF",
+      "target_method": "SELF",
+      "behaviors": [
+        {"key": "behavior.common.guard.shield", "timing": "ON", "effect_type": "APPLY_EFFECT", "effect_key": "status.shield", "params": {"intensity": 8}}
+      ]
+    },
+    {
+      "key": "skill.common.mend",
+      "name": "紧急修复",
+      "description": "恢复一名友方的生命记录。",
+      "type": "NORMAL",
+      "cooldown": 2,
+      "emotion": 0,
+      "target_scope": "FRIENDLY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {"key": "behavior.common.mend.heal", "timing": "ON", "effect_type": "HEAL", "value": "1d6+4"}
+      ]
+    },
+    {
+      "key": "skill.common.rupture_cut",
+      "name": "裂痕刻写",
+      "description": "命中后留下破裂。展示命中条件与多行为技能。",
+      "type": "NORMAL",
+      "cooldown": 1,
+      "emotion": 0,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {"key": "behavior.common.rupture_cut.damage", "timing": "ON", "order": 0, "effect_type": "DAMAGE", "value": "1d6+3"},
+        {"key": "behavior.common.rupture_cut.rupture", "timing": "ON", "order": 1, "trigger_condition": "ON_HIT", "trigger_scope": "PER_HIT", "effect_type": "APPLY_EFFECT", "effect_key": "status.rupture", "params": {"intensity": 3, "stacks": 1}}
+      ]
+    },
+    {
+      "key": "skill.common.delayed_weakness",
+      "name": "迟滞指令",
+      "description": "为目标登记下回合开始生效的虚弱。",
+      "type": "NORMAL",
+      "cooldown": 2,
+      "emotion": 0,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {"key": "behavior.common.delayed_weakness.apply", "timing": "ON", "effect_type": "APPLY_EFFECT", "effect_key": "status.weakness", "params": {"intensity": 2, "activation_timing": "NEXT_TURN_START"}}
+      ]
+    }
+  ],
+  "characters": [
+    {
+      "key": "unit.training_assistant",
+      "name": "训练协作者",
+      "description": "用于验证自定义友方内容的非核心单位。",
+      "max_hp": 80,
+      "max_actions": 1,
+      "max_stagger": 35,
+      "tags": ["人类"],
+      "skills": ["skill.common.strike", "skill.common.mend"]
+    },
+    {
+      "key": "enemy.training_shell",
+      "name": "训练用空壳",
+      "description": "高生命值的测试敌人，能够登记下回合减益。",
+      "max_hp": 180,
+      "max_actions": 1,
+      "max_stagger": 60,
+      "tags": ["机械"],
+      "skills": ["skill.common.strike", "skill.common.delayed_weakness"]
+    }
+  ],
+  "abnormalities": [],
+  "manager_skills": [],
+  "encounters": [
+    {
+      "key": "encounter.training_ground",
+      "name": "训练场档案",
+      "description": "用于验证编成、人格装备与多阶段接战流程的基础关卡。",
+      "stages": [
+        {
+          "name": "第一阶段：空壳列队",
+          "clear_when": {"type": "ALL_ENEMIES_DEFEATED"},
+          "on_clear": "NEXT_STAGE",
+          "enemies": [
+            {"id": "frontline", "template": "enemy.training_shell", "count": 2}
+          ]
+        },
+        {
+          "name": "第二阶段：增援记录",
+          "clear_when": {"type": "ALL_ENEMIES_DEFEATED"},
+          "on_clear": "VICTORY",
+          "enemies": [
+            {"id": "reinforcement", "template": "enemy.training_shell", "count": 3}
+          ]
+        }
+      ]
+    }
+  ]
+}

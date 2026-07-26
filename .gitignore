@@ -5,6 +5,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
+.pytest_tmp*/
 
 # 虚拟环境
 venv/
@@ -23,3 +25,11 @@ ENV/
 
 # 其他
 .DS_Store
+
+# Dewbot v2 runtime databases
+src/data/dewbot*.db
+src/data/dewbot*.db-*
+
+# 运行时锁与测试临时产物
+src/data/*.frontend.lock
+src/data/pytest-*/

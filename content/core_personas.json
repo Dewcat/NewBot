@@ -1,0 +1,322 @@
+{
+  "pack": {
+    "key": "dewbot.core_personas",
+    "name": "核心人格档案",
+    "version": "2.0.0",
+    "description": "依据旧 DewBot 数据库与原始角色说明重构的珏、露、莹人格。旧拼点与理智效果已转换为伤害、情感硬币、状态和每战使用限制。",
+    "requires": [{"key": "dewbot.base", "min_version": "2.0.0"}]
+  },
+  "effects": [
+    {
+      "key": "status.dogfight_mark",
+      "name": "再战标记",
+      "category": "SPECIAL",
+      "description": "由丧家犬老大留在目标身上的战斗标记；仅标记者可据此发动追击。",
+      "icon": "▣",
+      "default_params": {
+        "persist": true,
+        "lifecycle_scope": "BATTLE"
+      }
+    }
+  ],
+  "skills": [
+    {
+      "key": "skill.ying.boss_mode",
+      "name": "老大模式",
+      "description": "指定一名友方，将喧嚣与胆气一并推上前线。本场战斗仅可使用一次；目标本回合获得3点强壮强度。",
+      "type": "NORMAL",
+      "cooldown": 0,
+      "emotion": 0,
+      "max_uses_per_battle": 1,
+      "target_scope": "FRIENDLY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {
+          "key": "behavior.ying.boss_mode.strength",
+          "timing": "ON",
+          "effect_type": "APPLY_EFFECT",
+          "effect_key": "status.strength",
+          "params": {"intensity": 3}
+        }
+      ]
+    },
+    {
+      "key": "skill.ying.straw_hat_dance",
+      "name": "草帽舞",
+      "description": "轻快的步伐藏着逼迫性的节奏。造成2d3+6伤害；命中后令目标获得1枚负面情感硬币。",
+      "type": "NORMAL",
+      "cooldown": 1,
+      "emotion": 0,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {"key": "behavior.ying.straw_hat_dance.damage", "timing": "ON", "order": 0, "effect_type": "DAMAGE", "value": "2d3+6"},
+        {"key": "behavior.ying.straw_hat_dance.emotion", "timing": "ON", "order": 1, "trigger_condition": "ON_HIT", "trigger_scope": "PER_TARGET", "effect_type": "SPECIAL", "value": "emotion_shift", "params": {"polarity": "NEGATIVE", "amount": 1}}
+      ]
+    },
+    {
+      "key": "skill.ying.maraca_dance",
+      "name": "沙锤舞",
+      "description": "沙锤声钻入思绪的缝隙。造成1d4+6伤害；命中后令目标获得1枚负面情感硬币。",
+      "type": "NORMAL",
+      "cooldown": 0,
+      "emotion": 0,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {"key": "behavior.ying.maraca_dance.damage", "timing": "ON", "order": 0, "effect_type": "DAMAGE", "value": "1d4+6"},
+        {"key": "behavior.ying.maraca_dance.emotion", "timing": "ON", "order": 1, "trigger_condition": "ON_HIT", "trigger_scope": "PER_TARGET", "effect_type": "SPECIAL", "value": "emotion_shift", "params": {"polarity": "NEGATIVE", "amount": 1}}
+      ]
+    },
+    {
+      "key": "skill.ying.pinata_party",
+      "name": "皮纳塔派对",
+      "description": "彩纸尚未落地，棍影已经击碎庆典。本场战斗仅可使用一次；造成5d4+8伤害，并令目标获得2枚负面情感硬币。",
+      "type": "NORMAL",
+      "cooldown": 0,
+      "emotion": 0,
+      "max_uses_per_battle": 1,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {"key": "behavior.ying.pinata_party.damage", "timing": "ON", "order": 0, "effect_type": "DAMAGE", "value": "5d4+8"},
+        {"key": "behavior.ying.pinata_party.emotion", "timing": "ON", "order": 1, "trigger_condition": "ON_HIT", "trigger_scope": "PER_TARGET", "effect_type": "SPECIAL", "value": "emotion_shift", "params": {"polarity": "NEGATIVE", "amount": 2}}
+      ]
+    },
+    {
+      "key": "skill.jue.loosen_muscles",
+      "name": "放松肌肉",
+      "description": "先把筋骨活动开，再记住眼前这张脸。造成2d4+3伤害，并在目标身上留下本场战斗持续的再战标记。",
+      "type": "NORMAL",
+      "cooldown": 1,
+      "emotion": 0,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {"key": "behavior.jue.loosen_muscles.damage", "timing": "ON", "order": 0, "effect_type": "DAMAGE", "value": "2d4+3"},
+        {"key": "behavior.jue.loosen_muscles.mark", "timing": "ON", "order": 1, "trigger_condition": "ON_HIT", "trigger_scope": "PER_TARGET", "effect_type": "APPLY_EFFECT", "effect_key": "status.dogfight_mark"}
+      ]
+    },
+    {
+      "key": "skill.jue.again_again",
+      "name": "再来再来！",
+      "description": "只可对由自己留下再战标记的敌人使用。造成3d3+7伤害。",
+      "type": "NORMAL",
+      "cooldown": 0,
+      "emotion": 0,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {"key": "behavior.jue.again_again.require_mark", "timing": "PRE", "effect_type": "SPECIAL", "value": "require_effect_from_actor", "params": {"effect_key": "status.dogfight_mark", "error": "那名敌人还没有被你盯上；先使用「放松肌肉」。"}},
+        {"key": "behavior.jue.again_again.damage", "timing": "ON", "effect_type": "DAMAGE", "value": "3d3+7"}
+      ]
+    },
+    {
+      "key": "skill.jue.caged_dogfight",
+      "name": "笼中狗斗",
+      "description": "没有退路，也就不必保留余力。本场战斗仅可使用一次；造成4d5+20伤害。",
+      "type": "NORMAL",
+      "cooldown": 0,
+      "emotion": 0,
+      "max_uses_per_battle": 1,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {"key": "behavior.jue.caged_dogfight.damage", "timing": "ON", "effect_type": "DAMAGE", "value": "4d5+20"}
+      ]
+    },
+    {
+      "key": "skill.lu.fortune_favors",
+      "name": "鸿运当头",
+      "description": "命运在刀尖上翻面。使用时随机获得2点强壮强度或2点虚弱强度，并获得对应的正面或负面情感硬币；随后造成1d25+5伤害。",
+      "type": "NORMAL",
+      "cooldown": 2,
+      "emotion": 0,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {"key": "behavior.lu.fortune_favors.verdict", "timing": "PRE", "effect_type": "SPECIAL", "value": "fortune_verdict", "params": {"intensity": 2}},
+        {"key": "behavior.lu.fortune_favors.damage", "timing": "ON", "effect_type": "DAMAGE", "value": "1d25+5"}
+      ]
+    },
+    {
+      "key": "skill.lu.throat_slit",
+      "name": "利刃封喉",
+      "description": "将原本的双倍伤害直接写进刀路。造成2d2+20伤害；若击杀目标，自身额外获得1枚正面情感硬币。",
+      "type": "NORMAL",
+      "cooldown": 2,
+      "emotion": 0,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {"key": "behavior.lu.throat_slit.damage", "timing": "ON", "order": 0, "effect_type": "DAMAGE", "value": "2d2+20"},
+        {"key": "behavior.lu.throat_slit.emotion", "timing": "POST", "order": 1, "trigger_condition": "ON_KILL_SELECTED_TARGET", "trigger_scope": "PER_SKILL", "target_source": "AUTO", "target_scope": "SELF", "target_method": "SELF", "effect_type": "SPECIAL", "value": "emotion_shift", "params": {"polarity": "POSITIVE", "amount": 1}}
+      ]
+    },
+    {
+      "key": "skill.lu.bone_deep_blade",
+      "name": "入骨尖刀",
+      "description": "刀锋避开表面，直取骨缝。造成3d5+3伤害。",
+      "type": "NORMAL",
+      "cooldown": 0,
+      "emotion": 0,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {"key": "behavior.lu.bone_deep_blade.damage", "timing": "ON", "effect_type": "DAMAGE", "value": "3d5+3"}
+      ]
+    },
+    {
+      "key": "skill.lu.mutilate",
+      "name": "碎尸万段",
+      "description": "极端的落差正是这把刀的兴致。造成2d25+10伤害。",
+      "type": "NORMAL",
+      "cooldown": 3,
+      "emotion": 0,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {"key": "behavior.lu.mutilate.damage", "timing": "ON", "effect_type": "DAMAGE", "value": "2d25+10"}
+      ]
+    }
+  ],
+  "core_characters": [
+    {
+      "name": "珏",
+      "description": "角色本体：追猎者。人格会替换普通技能与战斗参数，但不会替换珏这个角色本身或其 EGO 归属。",
+      "max_hp": 100,
+      "max_actions": 1,
+      "max_stagger": 45,
+      "tags": ["人类"]
+    },
+    {
+      "name": "露",
+      "description": "角色本体：风险操盘者。人格改变她的武器与战斗手段，EGO 永远属于露。",
+      "max_hp": 100,
+      "max_actions": 1,
+      "max_stagger": 45,
+      "tags": ["人类"]
+    },
+    {
+      "name": "莹",
+      "description": "角色本体：情感煽动者。人格决定她如何把情绪变成战斗手段，EGO 永远属于莹。",
+      "max_hp": 100,
+      "max_actions": 1,
+      "max_stagger": 45,
+      "tags": ["人类"]
+    },
+    {
+      "name": "笙",
+      "description": "角色本体：核心角色笙。当前仍使用初始人格，等待后续人格与 EGO 内容包扩展。",
+      "max_hp": 100,
+      "max_actions": 1,
+      "max_stagger": 45,
+      "tags": ["人类"]
+    },
+    {
+      "name": "曦",
+      "description": "角色本体：核心角色曦。当前仍使用初始人格，等待后续人格与 EGO 内容包扩展。",
+      "max_hp": 100,
+      "max_actions": 1,
+      "max_stagger": 45,
+      "tags": ["人类"]
+    }
+  ],
+  "characters": [],
+  "personas": [
+    {
+      "key": "persona.jue.initial",
+      "character": "珏",
+      "name": "初始人格",
+      "description": "珏未装备特殊人格时的原始战斗记录。",
+      "max_hp": 100,
+      "max_actions": 1,
+      "max_stagger": 45,
+      "default": true,
+      "skills": ["skill.common.strike", "skill.common.guard"]
+    },
+    {
+      "key": "persona.jue.stray_hound_boss",
+      "character": "珏",
+      "name": "丧家犬 老大",
+      "description": "HP 150。旧防御等级+3折算为15点混乱耐性。擅长锁定目标、连续追击，并以一次性的「笼中狗斗」结束纠缠。",
+      "max_hp": 150,
+      "max_actions": 1,
+      "max_stagger": 60,
+      "default": false,
+      "metadata": {"legacy_defense_level": 3, "source": "Dewcat/DewBot + 原始人格说明"},
+      "skills": ["skill.jue.loosen_muscles", "skill.jue.again_again", "skill.jue.caged_dogfight"]
+    },
+    {
+      "key": "persona.lu.initial",
+      "character": "露",
+      "name": "初始人格",
+      "description": "露未装备特殊人格时的原始战斗记录。",
+      "max_hp": 100,
+      "max_actions": 1,
+      "max_stagger": 45,
+      "default": true,
+      "skills": ["skill.common.strike", "skill.common.mend"]
+    },
+    {
+      "key": "persona.lu.ting_tang_boss",
+      "character": "露",
+      "name": "叮当帮 帮主",
+      "description": "HP 150。旧防御等级+2折算为10点混乱耐性。伤害上下限极大，围绕幸运判定、处决与击杀后的正面情感展开。",
+      "max_hp": 150,
+      "max_actions": 1,
+      "max_stagger": 55,
+      "default": false,
+      "metadata": {"legacy_defense_level": 2, "source": "Dewcat/DewBot + 原始人格说明"},
+      "skills": ["skill.lu.fortune_favors", "skill.lu.throat_slit", "skill.lu.bone_deep_blade", "skill.lu.mutilate"]
+    },
+    {
+      "key": "persona.ying.initial",
+      "character": "莹",
+      "name": "初始人格",
+      "description": "莹未装备特殊人格时的原始战斗记录。",
+      "max_hp": 100,
+      "max_actions": 1,
+      "max_stagger": 45,
+      "default": true,
+      "skills": ["skill.common.rupture_cut", "skill.common.guard"]
+    },
+    {
+      "key": "persona.ying.wandering_band_leader",
+      "character": "莹",
+      "name": "流浪乐队 头目",
+      "description": "HP 120。以舞步持续制造负面情感，并能用「老大模式」强化友方；两项招牌技能各限每战一次。",
+      "max_hp": 120,
+      "max_actions": 1,
+      "max_stagger": 45,
+      "default": false,
+      "metadata": {"legacy_defense_level": 0, "source": "Dewcat/DewBot + 原始人格说明"},
+      "skills": ["skill.ying.boss_mode", "skill.ying.straw_hat_dance", "skill.ying.maraca_dance", "skill.ying.pinata_party"]
+    },
+    {
+      "key": "persona.sheng.core_initial",
+      "character": "笙",
+      "name": "初始人格",
+      "description": "笙的默认人格；保留基础攻击与紧急修复。",
+      "max_hp": 100,
+      "max_actions": 1,
+      "max_stagger": 45,
+      "default": true,
+      "skills": ["skill.common.strike", "skill.common.mend"]
+    },
+    {
+      "key": "persona.xi.core_initial",
+      "character": "曦",
+      "name": "初始人格",
+      "description": "曦的默认人格；保留基础攻击与裂痕刻写。",
+      "max_hp": 100,
+      "max_actions": 1,
+      "max_stagger": 45,
+      "default": true,
+      "skills": ["skill.common.strike", "skill.common.rupture_cut"]
+    }
+  ],
+  "character_extensions": [],
+  "abnormalities": [],
+  "manager_skills": []
+}

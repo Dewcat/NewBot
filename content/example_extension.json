@@ -1,0 +1,99 @@
+{
+  "pack": {
+    "key": "dewbot.example",
+    "name": "扩展作者示例",
+    "version": "1.0.0",
+    "description": "演示跨包引用、人格技能、延迟效果、书页与剧情解锁能力。",
+    "requires": [
+      {"key": "dewbot.base", "min_version": "2.0.0"},
+      {"key": "dewbot.core_personas", "min_version": "2.0.0"}
+    ]
+  },
+  "effects": [],
+  "skills": [
+    {
+      "key": "example.skill.echo_cut",
+      "name": "余响切割",
+      "description": "刻下创口；虚弱在下一回合开始才进入目标的记录。",
+      "type": "NORMAL",
+      "cooldown": 2,
+      "emotion": 0,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {
+          "key": "example.behavior.echo_cut.damage",
+          "timing": "ON",
+          "effect_type": "DAMAGE",
+          "value": "1d6+3"
+        },
+        {
+          "key": "example.behavior.echo_cut.weakness",
+          "timing": "ON",
+          "trigger_condition": "ON_HIT",
+          "trigger_scope": "PER_TARGET",
+          "effect_type": "APPLY_EFFECT",
+          "effect_key": "status.weakness",
+          "params": {
+            "intensity": 1,
+            "activation_timing": "NEXT_TURN_START"
+          }
+        }
+      ]
+    }
+  ],
+  "characters": [
+    {
+      "key": "example.archivist",
+      "name": "见习司书",
+      "description": "供内容作者验证扩展流程的非核心单位。",
+      "max_hp": 92,
+      "max_actions": 1,
+      "max_stagger": 40,
+      "tags": ["人类"],
+      "skills": ["skill.common.guard", "example.skill.echo_cut"]
+    }
+  ],
+  "personas": [
+    {
+      "key": "example.persona.jue.echo",
+      "character": "珏",
+      "name": "余响司书",
+      "description": "示范扩展包如何给持久核心角色追加人格。",
+      "max_hp": 105,
+      "max_actions": 1,
+      "max_stagger": 48,
+      "skills": ["skill.common.guard", "example.skill.echo_cut"]
+    }
+  ],
+  "character_extensions": [],
+  "abnormalities": [
+    {
+      "key": "example.abnormality.second_hand",
+      "name": "停摆的秒针",
+      "description": "它没有继续前进，只是允许你多写下一行。",
+      "pages": [
+        {
+          "key": "example.page.borrowed_second",
+          "name": "借来的一秒",
+          "type": "AWAKENING",
+          "description": "回合开始时额外获得1点行动。",
+          "handler": "bonus_actions",
+          "params": {"amount": 1, "events": ["TURN_START"]}
+        }
+      ]
+    }
+  ],
+  "manager_skills": [
+    {
+      "key": "example.manager.rewrite_margin",
+      "name": "改写页边",
+      "description": "本回合为所有仍可行动的我方单位各追加1点行动。",
+      "unlock": "story.example.first_archive",
+      "handler": "bonus_actions",
+      "max_uses": 1,
+      "allowed_phase": "FRIENDLY_ACTION",
+      "params": {"amount": 1, "target_faction": "FRIENDLY"}
+    }
+  ]
+}

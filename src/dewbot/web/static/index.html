@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dewbot 控制台</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%23c79b3b'/%3E%3Ctext x='8' y='12' font-size='10' text-anchor='middle' fill='%2326221a' font-family='sans-serif' font-weight='bold'%3ED%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<noscript><div class="noscript-warn">Dewbot 控制台需要启用 JavaScript。</div></noscript>
+
+<!-- 登录页 -->
+<div id="login-view" class="hidden">
+  <div class="login-backdrop"></div>
+  <form id="login-card" autocomplete="off">
+    <div class="login-brand">
+      <span class="login-logo">D</span>
+      <h1>Dewbot</h1>
+      <p>回合制战斗控制台</p>
+    </div>
+    <label class="login-label" for="login-key">访问密钥</label>
+    <input id="login-key" type="password" placeholder="输入管理人或玩家密钥"
+           autocomplete="current-password" spellcheck="false">
+    <button id="login-submit" class="btn primary block" type="submit">进入档案馆</button>
+    <p class="login-hint">管理人与玩家使用不同的密钥登录，界面会按角色展开对应权限。</p>
+  </form>
+</div>
+
+<!-- 主界面 -->
+<div id="app-view" class="hidden">
+  <div id="sidebar-backdrop" class="hidden"></div>
+
+  <aside id="nav-col">
+    <div class="nav-brand">
+      <span class="nav-logo">D</span>
+      <div class="nav-brand-text">
+        <strong>Dewbot</strong>
+        <span id="conn-state" class="conn-state off" title="实时连接状态">连接中…</span>
+      </div>
+    </div>
+    <nav id="nav-list" aria-label="主导航"></nav>
+    <div id="user-bar">
+      <span id="role-badge" class="role-badge">—</span>
+      <span id="user-bar-text" class="user-bar-text">未登录</span>
+      <button id="logout-btn" class="icon-btn text-btn" type="button" title="登出">登出</button>
+    </div>
+  </aside>
+
+  <main id="main-col">
+    <header id="channel-header">
+      <button id="toggle-nav" class="icon-btn narrow-only" type="button" title="导航">☰</button>
+      <div id="channel-title" class="channel-title">
+        <span class="channel-hash">#</span>
+        <span id="channel-name">故事</span>
+      </div>
+      <div id="channel-meta" class="channel-meta"></div>
+      <button id="chat-search-btn" class="icon-btn" type="button" title="搜索聊天记录">🔍</button>
+      <button id="toggle-status" class="icon-btn narrow-only" type="button" title="战斗状态">◫</button>
+    </header>
+
+    <div id="notice-banner" class="hidden"></div>
+    <div id="battle-strip" class="hidden"></div>
+
+    <section id="log-view">
+      <div id="log-scroll">
+        <div id="log-list"></div>
+      </div>
+      <button id="jump-latest" class="hidden" type="button">跳到最新 ↓</button>
+    </section>
+
+    <section id="page-view" class="hidden">
+      <div id="page-scroll"></div>
+    </section>
+
+    <div id="chat-bar" class="hidden">
+      <textarea id="chat-input" rows="1" placeholder="输入消息…"></textarea>
+      <button id="chat-send" class="btn primary" type="button">发送</button>
+    </div>
+
+    <footer id="action-bar" class="hidden"></footer>
+  </main>
+
+  <aside id="status-col">
+    <header class="status-header">战斗状态</header>
+    <div id="status-list"></div>
+  </aside>
+</div>
+
+<div id="modal-root" class="hidden"></div>
+<div id="toast-root" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,624 @@
+{
+  "pack": {
+    "key": "dewbot.test_showcase",
+    "name": "全功能演练包",
+    "version": "1.3.0",
+    "description": "2026-07-26 大改的验收关卡：伤害分档颜色、效果配色与新播报格式、助战先行、BOSS 标签、经理干预、书页卡组、发布确认与多阶段流程。",
+    "requires": [
+      {
+        "key": "dewbot.base",
+        "min_version": "2.0.0"
+      }
+    ]
+  },
+  "effects": [],
+  "skills": [
+    {
+      "key": "showcase.skill.light_swing",
+      "name": "轻挥",
+      "description": "固定 3 点伤害：验证小伤害的暖橙色播报。",
+      "type": "NORMAL",
+      "cooldown": 0,
+      "emotion": 0,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {
+          "key": "showcase.behavior.light_swing.damage",
+          "timing": "ON",
+          "effect_type": "DAMAGE",
+          "value": "3"
+        }
+      ]
+    },
+    {
+      "key": "showcase.skill.heavy_blow",
+      "name": "重击",
+      "description": "固定 12 点伤害：验证中伤害的橙色播报。",
+      "type": "NORMAL",
+      "cooldown": 0,
+      "emotion": 0,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {
+          "key": "showcase.behavior.heavy_blow.damage",
+          "timing": "ON",
+          "effect_type": "DAMAGE",
+          "value": "12"
+        }
+      ]
+    },
+    {
+      "key": "showcase.skill.assault",
+      "name": "强袭",
+      "description": "2d6+18 伤害：验证大伤害的红橙色播报。",
+      "type": "NORMAL",
+      "cooldown": 0,
+      "emotion": 0,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {
+          "key": "showcase.behavior.assault.damage",
+          "timing": "ON",
+          "effect_type": "DAMAGE",
+          "value": "2d6+18"
+        }
+      ]
+    },
+    {
+      "key": "showcase.skill.annihilation",
+      "name": "毁灭一击",
+      "description": "固定 40 点伤害（冷却2回合）：验证重伤的亮红发光抖动播报。",
+      "type": "NORMAL",
+      "cooldown": 2,
+      "emotion": 0,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {
+          "key": "showcase.behavior.annihilation.damage",
+          "timing": "ON",
+          "effect_type": "DAMAGE",
+          "value": "40"
+        }
+      ]
+    },
+    {
+      "key": "showcase.skill.arson",
+      "name": "纵火",
+      "description": "施加3点强度烧伤：验证「获得3级『烧伤』」表述与红色配色。",
+      "type": "NORMAL",
+      "cooldown": 0,
+      "emotion": 0,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {
+          "key": "showcase.behavior.arson.burn",
+          "timing": "ON",
+          "effect_type": "APPLY_EFFECT",
+          "effect_key": "status.burn",
+          "params": {
+            "intensity": 3
+          }
+        }
+      ]
+    },
+    {
+      "key": "showcase.skill.rend",
+      "name": "撕裂",
+      "description": "施加3点强度破裂并叠2层：验证「获得2层3级『破裂』」表述与绿色配色。",
+      "type": "NORMAL",
+      "cooldown": 0,
+      "emotion": 0,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {
+          "key": "showcase.behavior.rend.rupture",
+          "timing": "ON",
+          "effect_type": "APPLY_EFFECT",
+          "effect_key": "status.rupture",
+          "params": {
+            "intensity": 3,
+            "stacks": 2
+          }
+        }
+      ]
+    },
+    {
+      "key": "showcase.skill.plague",
+      "name": "百病缠身",
+      "description": "一次施加中毒、流血与易伤：一屏看全三种减益配色。",
+      "type": "NORMAL",
+      "cooldown": 1,
+      "emotion": 0,
+      "target_scope": "ENEMY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {
+          "key": "showcase.behavior.plague.poison",
+          "timing": "ON",
+          "order": 0,
+          "effect_type": "APPLY_EFFECT",
+          "effect_key": "status.poison",
+          "params": {
+            "intensity": 2
+          }
+        },
+        {
+          "key": "showcase.behavior.plague.bleed",
+          "timing": "ON",
+          "order": 1,
+          "effect_type": "APPLY_EFFECT",
+          "effect_key": "status.bleeding",
+          "params": {
+            "intensity": 2
+          }
+        },
+        {
+          "key": "showcase.behavior.plague.vulnerable",
+          "timing": "ON",
+          "order": 2,
+          "effect_type": "APPLY_EFFECT",
+          "effect_key": "status.vulnerable",
+          "params": {
+            "intensity": 1
+          }
+        }
+      ]
+    },
+    {
+      "key": "showcase.skill.iron_wall",
+      "name": "铁壁展开",
+      "description": "为自身施加护盾与守护：验证增益配色（浅蓝/青蓝）。",
+      "type": "NORMAL",
+      "cooldown": 1,
+      "emotion": 0,
+      "target_scope": "SELF",
+      "target_method": "SELF",
+      "behaviors": [
+        {
+          "key": "showcase.behavior.iron_wall.shield",
+          "timing": "ON",
+          "order": 0,
+          "effect_type": "APPLY_EFFECT",
+          "effect_key": "status.shield",
+          "params": {
+            "intensity": 6
+          }
+        },
+        {
+          "key": "showcase.behavior.iron_wall.guard",
+          "timing": "ON",
+          "order": 1,
+          "effect_type": "APPLY_EFFECT",
+          "effect_key": "status.guard",
+          "params": {
+            "intensity": 2
+          }
+        }
+      ]
+    },
+    {
+      "key": "showcase.skill.war_cry",
+      "name": "战吼",
+      "description": "自身获得2点强度强壮并起手呼吸法：验证强壮红与呼吸法蓝。",
+      "type": "NORMAL",
+      "cooldown": 1,
+      "emotion": 0,
+      "target_scope": "SELF",
+      "target_method": "SELF",
+      "behaviors": [
+        {
+          "key": "showcase.behavior.war_cry.strength",
+          "timing": "ON",
+          "order": 0,
+          "effect_type": "APPLY_EFFECT",
+          "effect_key": "status.strength",
+          "params": {
+            "intensity": 2
+          }
+        },
+        {
+          "key": "showcase.behavior.war_cry.breathing",
+          "timing": "ON",
+          "order": 1,
+          "effect_type": "APPLY_EFFECT",
+          "effect_key": "status.breathing",
+          "params": {
+            "intensity": 1
+          }
+        }
+      ]
+    },
+    {
+      "key": "showcase.skill.emotion_howl",
+      "name": "共鸣嘶吼",
+      "description": "为一名友方累积3枚正面情感硬币：快速触发情感升级与书页候选。",
+      "type": "NORMAL",
+      "cooldown": 0,
+      "emotion": 0,
+      "target_scope": "FRIENDLY",
+      "target_method": "SELECT_TARGET",
+      "behaviors": [
+        {
+          "key": "showcase.behavior.emotion_howl.shift",
+          "timing": "ON",
+          "effect_type": "SPECIAL",
+          "value": "emotion_shift",
+          "params": {
+            "polarity": "POSITIVE",
+            "amount": 3
+          }
+        }
+      ]
+    }
+  ],
+  "characters": [
+    {
+      "key": "unit.showcase.support",
+      "name": "演练·辅助人偶",
+      "description": "助战单位：治疗、护盾与情感共鸣，验证助战标签与助战先行。",
+      "max_hp": 90,
+      "max_actions": 2,
+      "max_stagger": 45,
+      "tags": [
+        "机械"
+      ],
+      "skills": [
+        "skill.common.mend",
+        "showcase.skill.iron_wall",
+        "showcase.skill.emotion_howl",
+        "showcase.skill.light_swing"
+      ]
+    },
+    {
+      "key": "unit.showcase.striker",
+      "name": "演练·斗士人偶",
+      "description": "助战单位：携带四档伤害与全套效果技能，验证播报分档与配色。",
+      "max_hp": 120,
+      "max_actions": 2,
+      "max_stagger": 55,
+      "tags": [
+        "机械"
+      ],
+      "skills": [
+        "showcase.skill.light_swing",
+        "showcase.skill.heavy_blow",
+        "showcase.skill.assault",
+        "showcase.skill.annihilation",
+        "showcase.skill.arson",
+        "showcase.skill.rend",
+        "showcase.skill.plague",
+        "showcase.skill.war_cry"
+      ]
+    },
+    {
+      "key": "enemy.showcase.dummy",
+      "name": "演练·训练木人",
+      "description": "高血量低威胁：用来慢慢打，攒情感、看效果挂身。",
+      "max_hp": 260,
+      "max_actions": 1,
+      "max_stagger": 70,
+      "tags": [
+        "机械"
+      ],
+      "skills": [
+        "showcase.skill.light_swing"
+      ]
+    },
+    {
+      "key": "enemy.showcase.puppet",
+      "name": "演练·脆皮傀儡",
+      "description": "低血量低混乱：验证混乱击破与倒下的抖动播报。",
+      "max_hp": 14,
+      "max_actions": 1,
+      "max_stagger": 8,
+      "tags": [
+        "机械"
+      ],
+      "skills": [
+        "showcase.skill.light_swing"
+      ]
+    },
+    {
+      "key": "enemy.showcase.colossus",
+      "name": "演练·巨像",
+      "description": "带 BOSS 标签的终幕敌人：验证 BOSS 标记、延迟效果与大伤害对轰。",
+      "max_hp": 320,
+      "max_actions": 2,
+      "max_stagger": 90,
+      "tags": [
+        "boss",
+        "机械"
+      ],
+      "skills": [
+        "showcase.skill.heavy_blow",
+        "showcase.skill.arson",
+        "skill.common.delayed_weakness"
+      ]
+    }
+  ],
+  "abnormalities": [
+    {
+      "key": "showcase.abnormality.lantern_case",
+      "name": "演练·灯火之匣",
+      "description": "打开时借给你一点光，也可能烧掉你的运气。",
+      "carry_bonus": {
+        "key": "showcase.carry.lantern_warmth",
+        "name": "烛照",
+        "description": "携带生效：每回合开始为队伍累积1枚正面情感硬币。",
+        "handler": "emotion_shift",
+        "params": {
+          "polarity": "POSITIVE",
+          "amount": 1,
+          "events": [
+            "TURN_START"
+          ]
+        }
+      },
+      "pages": [
+        {
+          "key": "showcase.page.borrowed_light",
+          "name": "借来的灯火",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "回合开始时额外获得1点行动。",
+          "handler": "bonus_actions",
+          "params": {
+            "amount": 1,
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "showcase.page.oil_backlash",
+          "name": "灯油反噬",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "回合开始：燃烧灯油+1点行动，50%概率引火上身（自身1级烧伤）。",
+          "handler": "hook_sequence",
+          "params": {
+            "events": [
+              "TURN_START"
+            ],
+            "steps": [
+              {
+                "handler": "bonus_actions",
+                "params": {
+                  "amount": 1
+                }
+              },
+              {
+                "handler": "hook_apply_effect",
+                "params": {
+                  "effect_key": "status.burn",
+                  "intensity": 1,
+                  "target": "SELF",
+                  "chance": 0.5
+                }
+              }
+            ]
+          }
+        },
+        {
+          "key": "showcase.page.white_night",
+          "name": "白夜灯塔",
+          "type": "AWAKENING",
+          "level": 3,
+          "description": "回合开始时额外获得2点行动。",
+          "handler": "bonus_actions",
+          "params": {
+            "amount": 2,
+            "events": [
+              "TURN_START"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "showcase.abnormality.pendulum_heart",
+      "name": "演练·摆钟之心",
+      "description": "每一次摆动都在为某人计时。",
+      "carry_bonus": {
+        "key": "showcase.carry.pendulum_inertia",
+        "name": "摆锤惯性",
+        "description": "携带生效：击杀敌人时额外获得1点行动。",
+        "handler": "bonus_actions",
+        "params": {
+          "amount": 1,
+          "events": [
+            "ON_KILL"
+          ]
+        }
+      },
+      "pages": [
+        {
+          "key": "showcase.page.pendulum_haste",
+          "name": "钟摆加速",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "每回合开始累积1枚正面情感硬币。",
+          "handler": "emotion_shift",
+          "params": {
+            "polarity": "POSITIVE",
+            "amount": 1,
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "showcase.page.gear_bite",
+          "name": "齿轮咬合",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "回合开始掷命运判定：五五开获得2点强度的强壮或虚弱。",
+          "handler": "fortune_verdict",
+          "params": {
+            "intensity": 2,
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "showcase.page.final_stop",
+          "name": "停摆的终章",
+          "type": "AWAKENING",
+          "level": 3,
+          "description": "回合开始时额外获得2点行动。",
+          "handler": "bonus_actions",
+          "params": {
+            "amount": 2,
+            "events": [
+              "TURN_START"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "showcase.abnormality.ember_garden",
+      "name": "演练·余烬花园",
+      "description": "在灰里种花的人，也会收获灰。",
+      "carry_bonus": {
+        "key": "showcase.carry.garden_scent",
+        "name": "花香萦绕",
+        "description": "携带生效：每回合开始掷1点强度的命运判定。",
+        "handler": "fortune_verdict",
+        "params": {
+          "intensity": 1,
+          "events": [
+            "TURN_START"
+          ]
+        }
+      },
+      "pages": [
+        {
+          "key": "showcase.page.sprout",
+          "name": "抽芽",
+          "type": "AWAKENING",
+          "level": 1,
+          "description": "击杀敌人时额外获得1点行动。",
+          "handler": "bonus_actions",
+          "params": {
+            "amount": 1,
+            "events": [
+              "ON_KILL"
+            ]
+          }
+        },
+        {
+          "key": "showcase.page.thorn_bind",
+          "name": "荆棘缠绕",
+          "type": "BREAKDOWN",
+          "level": 2,
+          "description": "回合开始掷3点强度的命运判定。",
+          "handler": "fortune_verdict",
+          "params": {
+            "intensity": 3,
+            "events": [
+              "TURN_START"
+            ]
+          }
+        },
+        {
+          "key": "showcase.page.garden_in_glory",
+          "name": "满园盛放",
+          "type": "AWAKENING",
+          "level": 3,
+          "description": "回合开始时额外获得2点行动。",
+          "handler": "bonus_actions",
+          "params": {
+            "amount": 2,
+            "events": [
+              "TURN_START"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "manager_skills": [
+    {
+      "key": "showcase.manager.emergency_call",
+      "name": "紧急支援",
+      "description": "本回合为所有仍可行动的我方单位各追加1点行动（每场限2次）：验证经理干预入口与次数限制。",
+      "handler": "bonus_actions",
+      "max_uses": 2,
+      "allowed_phase": "FRIENDLY_ACTION",
+      "params": {
+        "amount": 1,
+        "target_faction": "FRIENDLY"
+      }
+    }
+  ],
+  "encounters": [
+    {
+      "key": "encounter.showcase.full_drill",
+      "name": "全功能演练",
+      "description": "三阶段验收关：第一阶段慢打攒情感看效果，第二阶段可整段删除，终幕对 BOSS。",
+      "abnormalities": [
+        "showcase.abnormality.lantern_case",
+        "showcase.abnormality.pendulum_heart",
+        "showcase.abnormality.ember_garden"
+      ],
+      "stages": [
+        {
+          "name": "第一阶段：木人与傀儡",
+          "clear_when": {
+            "type": "ALL_ENEMIES_DEFEATED"
+          },
+          "on_clear": "NEXT_STAGE",
+          "enemies": [
+            {
+              "id": "dummy",
+              "template": "enemy.showcase.dummy",
+              "count": 1
+            },
+            {
+              "id": "puppets",
+              "template": "enemy.showcase.puppet",
+              "count": 2
+            }
+          ]
+        },
+        {
+          "name": "第二阶段：傀儡增援（可删除测试）",
+          "clear_when": {
+            "type": "ALL_ENEMIES_DEFEATED"
+          },
+          "on_clear": "NEXT_STAGE",
+          "enemies": [
+            {
+              "id": "reinforcement",
+              "template": "enemy.showcase.puppet",
+              "count": 2
+            }
+          ]
+        },
+        {
+          "name": "终幕：巨像显现",
+          "clear_when": {
+            "type": "TARGET_DEFEATED",
+            "target": "boss"
+          },
+          "on_clear": "VICTORY",
+          "enemies": [
+            {
+              "id": "boss",
+              "template": "enemy.showcase.colossus",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

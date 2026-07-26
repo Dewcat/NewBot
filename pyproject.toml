@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dewbot"
+version = "2.0.0"
+description = "Data-driven Telegram turn-based battle bot"
+requires-python = ">=3.12"
+dependencies = [
+  "python-dotenv>=1.0,<2",
+  "python-telegram-bot[socks]>=21,<22",
+  "fastapi>=0.110,<1",
+  "uvicorn>=0.30,<1",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<9", "httpx>=0.27,<1"]
+
+[project.scripts]
+dewbot = "dewbot.cli:main"
+dewbot-telegram = "dewbot.telegram_app:main"
+dewbot-web = "dewbot.web.server:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["dewbot*"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_default_fixture_loop_scope = "function"
