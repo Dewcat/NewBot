@@ -300,6 +300,10 @@ def create_app(
 
     story_store = open_story_store(settings)
     app.state.story_store = story_store
+    from ..assistant import PrivacyStore, WritingAssistant
+
+    writing_assistant = WritingAssistant(PrivacyStore(engine.database), story_store, settings)
+    app.state.writing_assistant = writing_assistant
 
     # -- 错误统一整形 ----------------------------------------------------
     @app.exception_handler(ApiError)
@@ -790,16 +794,16 @@ def create_app(
     async def chat_edit(request: Request, message_id: int) -> dict[str, Any]:
         role = _require_role(request)
         body = await _payload(request)
-        message = await _locked(
+        message = await writing_assistant.change_context(lambda: _locked(
             chat_store.edit, message_id, role, _as_str(body.get("content"), "content")
-        )
+        ))
         _broadcast("chat", {"action": "edit", "message": message})
         return message
 
     @app.post("/api/chat/{message_id}/revoke")
     async def chat_revoke(request: Request, message_id: int) -> dict[str, Any]:
         role = _require_role(request)
-        message = await _locked(chat_store.revoke, message_id, role)
+        message = await writing_assistant.change_context(lambda: _locked(chat_store.revoke, message_id, role))
         _broadcast("chat", {"action": "revoke", "message": message})
         return message
 
@@ -1412,7 +1416,11 @@ def create_app(
     if story_store is not None:
         from .story_routes import install_story_routes
 
-        install_story_routes(app, story_store, _require_role, _require_gm)
+        install_story_routes(app, story_store, _require_role, _require_gm, writing_assistant)
+
+    from .assistant_routes import install_assistant_routes
+
+    install_assistant_routes(app, writing_assistant, _require_role, _require_gm, _broadcast)
 
     # -- 静态托管（GET / 与前端资源；目录可能由并行开发补齐） -------------
     @app.get("/", include_in_schema=False)

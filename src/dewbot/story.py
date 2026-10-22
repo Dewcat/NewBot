@@ -65,11 +65,18 @@ def _validated(data: dict[str, Any]) -> dict[str, Any]:
         result[key] = value
     if result["visibility"] == "public" and result["status"] != "confirmed":
         raise StoryError("只有已确认条目可以公开；待定和撤回条目请设为仅管理人。")
+    unlock_at = data.get("unlock_at", 0)
+    if type(unlock_at) is not int or not 0 <= unlock_at <= 99999:
+        raise StoryError("解锁进度必须是 0–99999 的整数。")
+    if type(data.get("ai_allowed", False)) is not bool:
+        raise StoryError("AI 许可必须为布尔值。")
+    result.update(unlock_at=unlock_at, ai_allowed=int(data.get("ai_allowed", False)))
     return result
 
 
 def _present(row: Any, role: str) -> dict[str, Any]:
     result = dict(row)
+    result["ai_allowed"] = bool(result.get("ai_allowed", False))
     if role != "gm":
         result.pop("source", None)
     return result
@@ -106,6 +113,18 @@ class StoryStore:
                     PRIMARY KEY(entry_id,revision)
                 )
             """)
+            columns = {x["name"] for x in con.execute("PRAGMA table_info(story_entries)")}
+            if "unlock_at" not in columns:
+                con.execute("ALTER TABLE story_entries ADD COLUMN unlock_at INTEGER NOT NULL DEFAULT 0")
+            if "ai_allowed" not in columns:
+                con.execute("ALTER TABLE story_entries ADD COLUMN ai_allowed INTEGER NOT NULL DEFAULT 0")
+            con.execute("""CREATE TABLE IF NOT EXISTS story_progress (
+                id INTEGER PRIMARY KEY CHECK(id=1), checkpoint INTEGER NOT NULL,
+                label TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1
+            )""")
+            con.execute("INSERT OR IGNORE INTO story_progress(id,checkpoint,label) VALUES(1,410,?)",
+                        ("第四章·第一部分结束（东柏刺伤李箱）",))
+            con.execute("CREATE TABLE IF NOT EXISTS story_seed_packs (key TEXT PRIMARY KEY)")
 
     def save(
         self, role: str, data: dict[str, Any], *, entry_id: int | None = None,
@@ -116,8 +135,8 @@ class StoryStore:
         with self.database.transaction() as con:
             if entry_id is None:
                 cursor = con.execute(
-                    "INSERT INTO story_entries(title,body,world,chapter,source,kind,status,visibility)"
-                    " VALUES(:title,:body,:world,:chapter,:source,:kind,:status,:visibility)",
+                    "INSERT INTO story_entries(title,body,world,chapter,source,kind,status,visibility,unlock_at,ai_allowed)"
+                    " VALUES(:title,:body,:world,:chapter,:source,:kind,:status,:visibility,:unlock_at,:ai_allowed)",
                     fields,
                 )
                 entry_id = int(cursor.lastrowid)
@@ -130,6 +149,7 @@ class StoryStore:
                 con.execute(
                     "UPDATE story_entries SET title=:title,body=:body,world=:world,chapter=:chapter,"
                     "source=:source,kind=:kind,status=:status,visibility=:visibility,"
+                    "unlock_at=:unlock_at,ai_allowed=:ai_allowed,"
                     "revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=:id",
                     {**fields, "id": entry_id},
                 )
@@ -137,7 +157,7 @@ class StoryStore:
             con.execute("INSERT INTO story_revisions VALUES(?,?,?)", (
                 entry_id, row["revision"], json.dumps(row, ensure_ascii=False),
             ))
-            return row
+            return _present(row, role)
 
     def list_entries(
         self, role: str, *, query: str = "", world: str = "", status: str = "",
@@ -151,6 +171,7 @@ class StoryStore:
         clauses, args = ["1=1"], []
         if role != "gm":
             clauses.append("visibility='public' AND status='confirmed'")
+            clauses.append("unlock_at<=(SELECT checkpoint FROM story_progress WHERE id=1)")
         if world:
             clauses.append("world=?")
             args.append(world)
@@ -173,7 +194,11 @@ class StoryStore:
 
     def get(self, role: str, entry_id: int) -> dict[str, Any]:
         _role(role)
-        row = self.database.fetch_one("SELECT * FROM story_entries WHERE id=?", (entry_id,))
+        visible = "" if role == "gm" else (
+            " AND visibility='public' AND status='confirmed'"
+            " AND unlock_at<=(SELECT checkpoint FROM story_progress WHERE id=1)"
+        )
+        row = self.database.fetch_one("SELECT * FROM story_entries WHERE id=?" + visible, (entry_id,))
         if row is None or (role != "gm" and (row["visibility"] != "public" or row["status"] != "confirmed")):
             # Identical response for a secret ID and a missing ID.
             raise StoryNotFound("未找到该故事条目。")
@@ -189,11 +214,70 @@ class StoryStore:
 
     def export(self, role: str) -> dict[str, Any]:
         _role(role)
-        where = "" if role == "gm" else " WHERE visibility='public' AND status='confirmed'"
+        where = "" if role == "gm" else (
+            " WHERE visibility='public' AND status='confirmed'"
+            " AND unlock_at<=(SELECT checkpoint FROM story_progress WHERE id=1)"
+        )
         entries = [_present(row, role) for row in self.database.fetch_all(
             "SELECT * FROM story_entries" + where + " ORDER BY id"
         )]
         return {"format": "dewbot.story.v1", "audience": role, "entries": entries}
+
+    def progress(self) -> dict[str, Any]:
+        return dict(self.database.fetch_one("SELECT checkpoint,label,revision FROM story_progress WHERE id=1"))
+
+    def set_progress(self, role: str, checkpoint: int, label: str, revision: int) -> dict[str, Any]:
+        _role(role, write=True)
+        if type(checkpoint) is not int or not 0 <= checkpoint <= 99999:
+            raise StoryError("进度必须是 0–99999 的整数。")
+        label = _text(label, "进度名称", 120, required=True)
+        with self.database.transaction() as con:
+            current = con.execute("SELECT revision FROM story_progress WHERE id=1").fetchone()
+            if type(revision) is not int or revision != current["revision"]:
+                raise StoryConflict("进度已变化，请刷新后重试。")
+            con.execute("UPDATE story_progress SET checkpoint=?,label=?,revision=revision+1 WHERE id=1", (checkpoint, label))
+        return self.progress()
+
+    def ai_entries(self, selected: list[int]) -> list[dict[str, Any]]:
+        # Explicit AI permission is independent of player visibility. Source notes
+        # and old revisions are never included, even for GM-only AI-approved notes.
+        with self.database.reading() as con:
+            con.execute("BEGIN")
+            rows = []
+            for entry_id in selected:
+                row = con.execute(
+                    "SELECT id,title,body,world,chapter FROM story_entries WHERE id=?"
+                    " AND ai_allowed=1 AND status='confirmed'"
+                    " AND unlock_at<=(SELECT checkpoint FROM story_progress WHERE id=1)", (entry_id,),
+                ).fetchone()
+                if row is None:
+                    raise StoryError("所选笔记尚未解锁或未获准提供给 AI，请重新选择。")
+                rows.append(dict(row))
+            return rows
+
+    def eligible_ai_entries(self, before_id: int = 2**63-1) -> list[dict[str, Any]]:
+        return [dict(x) for x in self.database.fetch_all(
+            "SELECT id,title,body,world,chapter FROM story_entries WHERE ai_allowed=1"
+            " AND status='confirmed' AND unlock_at<=(SELECT checkpoint FROM story_progress WHERE id=1)"
+            " AND id<? ORDER BY id DESC LIMIT 100", (before_id,),
+        )]
+
+    def seed_notebook(self) -> None:
+        from .notebook_seed import STARTER_NOTES
+
+        with self.database.transaction() as con:
+            if con.execute("SELECT 1 FROM story_seed_packs WHERE key='starter.v1'").fetchone():
+                return
+            for item in STARTER_NOTES:
+                fields = _validated({"world": "都市·共通知识", "kind": "lore", "status": "confirmed",
+                                     "visibility": "public", "ai_allowed": False, **item})
+                cur = con.execute(
+                    "INSERT INTO story_entries(title,body,world,chapter,source,kind,status,visibility,unlock_at,ai_allowed)"
+                    " VALUES(:title,:body,:world,:chapter,:source,:kind,:status,:visibility,:unlock_at,:ai_allowed)", fields,
+                )
+                row = dict(con.execute("SELECT * FROM story_entries WHERE id=?", (cur.lastrowid,)).fetchone())
+                con.execute("INSERT INTO story_revisions VALUES(?,?,?)", (row["id"], 1, json.dumps(row, ensure_ascii=False)))
+            con.execute("INSERT INTO story_seed_packs VALUES('starter.v1')")
 
 
 def open_story_store(settings: Any) -> StoryStore | None:
@@ -206,4 +290,5 @@ def open_story_store(settings: Any) -> StoryStore | None:
         raise StoryError("故事数据库必须与战斗数据库使用不同的文件。")
     store = StoryStore(Database(path))
     store.initialize()
+    store.seed_notebook()
     return store

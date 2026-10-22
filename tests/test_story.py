@@ -174,3 +174,34 @@ def test_telegram_admin_group_is_public_and_private_admin_is_private(store):
     update.effective_user.id = 8; replies.clear()
     asyncio.run(adapter.story_command(update, SimpleNamespace(args=[])))
     assert "未公开身份" not in '\n'.join(replies)
+
+
+def test_future_notes_are_hidden_from_every_player_surface(tmp_path):
+    app, gm, player = web_clients(tmp_path)
+    future = gm.post("/api/story/entries", json=entry(title="FUTURE_SENTINEL", body="FUTURE_BODY",
+        status="confirmed", visibility="public", unlock_at=420)).json()
+    for path in ("/api/story/entries", "/api/story/entries?q=FUTURE", "/api/story/export", f"/api/story/entries/{future['id']}"):
+        result = player.get(path)
+        assert "FUTURE_SENTINEL" not in result.text and "FUTURE_BODY" not in result.text
+    assert player.get(f"/api/story/entries/{future['id']}").status_code == 404
+    assert player.put("/api/story/progress",json={"checkpoint":420,"label":"第四章第二部分","revision":1}).status_code == 403
+    progress = gm.get("/api/story/progress").json()
+    update = {"checkpoint":420,"label":"第四章第二部分","revision":progress["revision"]}
+    assert gm.put("/api/story/progress",json=update).status_code == 200
+    assert player.get(f"/api/story/entries/{future['id']}").json()["title"] == "FUTURE_SENTINEL"
+    assert gm.put("/api/story/progress",json=update).status_code == 409
+    assert gm.put("/api/story/progress",json={**update,"checkpoint":410,"revision":2}).status_code == 200
+    assert player.get(f"/api/story/entries/{future['id']}").status_code == 404
+
+
+def test_notebook_seed_is_idempotent_and_preserves_gm_changes(tmp_path):
+    config = settings(tmp_path)
+    store = open_story_store(config)
+    original = store.list_entries("gm")[0]
+    count = len(store.export("gm")["entries"])
+    store.save("gm",{**original,"body":"GM revision","ai_allowed":False},entry_id=original["id"],expected_revision=1)
+    reopened = open_story_store(config)
+    assert len(reopened.export("gm")["entries"]) == count
+    assert reopened.get("gm",original["id"])["body"] == "GM revision"
+    assert reopened.progress()["checkpoint"] == 410
+    assert reopened.eligible_ai_entries() == []

@@ -25,11 +25,12 @@ class StoryTelegramAdapter:
                 text = f"#{item['id']} {item['title']}\n{item['world']} · {STATUSES[item['status']]}\n\n{item['body']}"
             else:
                 rows = await asyncio.to_thread(self.store.list_entries, role, query=query, limit=10)
-                heading = "故事档案（管理人私聊视图）" if role == "gm" else "已公开的故事档案"
-                text = heading + "\n" + ("\n".join(
+                heading = "但丁笔记（管理人私聊视图）" if role == "gm" else "已解锁的但丁笔记"
+                progress = await asyncio.to_thread(self.store.progress)
+                text = heading + "\n当前进度：" + progress["label"] + "\n" + ("\n".join(
                     f"#{x['id']} {x['title']} · {x['world']} · {STATUSES[x['status']]}" for x in rows
                 ) or "暂无匹配条目。")
-                text += "\n\n/story 编号 查看正文；/story 关键词 搜索。\n每次列出最新 10 条，完整浏览与编辑请用 Web 故事档案。"
+                text += "\n\n/notes 编号 查看正文；/notes 关键词 搜索。\n每次列出最新 10 条，完整浏览与编辑请用 Web 但丁笔记。"
         except (StoryError, PermissionError) as exc:
             text = str(exc)
         # Plain text only. No Markdown/HTML interpretation of authored content.

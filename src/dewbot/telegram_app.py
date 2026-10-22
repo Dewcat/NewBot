@@ -3439,9 +3439,10 @@ async def _register_bot_commands(application: Application) -> None:
         BotCommand("manager", "查看管理人能力"),
         BotCommand("stop", "确认中止当前战斗"),
         BotCommand("reload", "重新载入内容包"),
+        BotCommand("privacy", "查看或切换 AI 隐私模式"),
     ]
     if application.bot_data.get("story_store") is not None:
-        commands.append(BotCommand("story", "查看或搜索故事档案"))
+        commands.append(BotCommand("notes", "查看已解锁的但丁笔记"))
     await application.bot.set_my_commands(commands)
 
 
@@ -3494,6 +3495,12 @@ def create_application(
     application.bot_data["content_loader"] = loader
     application.bot_data["telegram_adapter"] = adapter
 
+    from .assistant import PrivacyStore
+    from .assistant_telegram import PrivacyTelegramAdapter
+
+    privacy_adapter = PrivacyTelegramAdapter(PrivacyStore(engine.database), settings.admin_ids)
+    application.add_handler(CommandHandler("privacy", privacy_adapter.privacy_command))
+
     from .story import open_story_store
 
     story_store = open_story_store(settings)
@@ -3503,6 +3510,7 @@ def create_application(
         story_adapter = StoryTelegramAdapter(story_store, settings.admin_ids)
         application.bot_data["story_store"] = story_store
         application.add_handler(CommandHandler("story", story_adapter.story_command))
+        application.add_handler(CommandHandler("notes", story_adapter.story_command))
 
     application.add_handler(CommandHandler("start", adapter.start_command))
     application.add_handler(CommandHandler("help", adapter.help_command))

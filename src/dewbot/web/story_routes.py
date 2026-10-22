@@ -13,6 +13,7 @@ from ..story import StoryConflict, StoryError, StoryNotFound, StoryStore
 def install_story_routes(
     app: FastAPI, store: StoryStore,
     require_role: Callable[[Request], str], require_gm: Callable[[Request], str],
+    assistant: Any = None,
 ) -> None:
     async def call(function: Any, *args: Any, **kwargs: Any) -> Any:
         try:
@@ -30,6 +31,10 @@ def install_story_routes(
         # A shared browser must not retrieve a previous GM response from cache.
         return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
+    async def mutate(function: Any, *args: Any, **kwargs: Any) -> Any:
+        operation = lambda: call(function, *args, **kwargs)
+        return await assistant.change_context(operation) if assistant else await operation()
+
     async def payload(request: Request) -> dict[str, Any]:
         try:
             data = await request.json()
@@ -38,6 +43,17 @@ def install_story_routes(
         if not isinstance(data, dict):
             raise HTTPException(400, "请求必须是对象。")
         return data
+
+    @app.get("/api/story/progress")
+    async def progress(request: Request) -> JSONResponse:
+        require_role(request)
+        return response(await call(store.progress))
+
+    @app.put("/api/story/progress")
+    async def change_progress(request: Request) -> JSONResponse:
+        role = require_gm(request)
+        data = await payload(request)
+        return response(await mutate(store.set_progress, role, data.get("checkpoint"), data.get("label"), data.get("revision")))
 
     @app.get("/api/story/entries")
     async def entries(request: Request) -> JSONResponse:
@@ -68,12 +84,12 @@ def install_story_routes(
     @app.post("/api/story/entries")
     async def create(request: Request) -> JSONResponse:
         role = require_gm(request)
-        return response(await call(store.save, role, await payload(request)))
+        return response(await mutate(store.save, role, await payload(request)))
 
     @app.put("/api/story/entries/{entry_id}")
     async def update(request: Request, entry_id: int) -> JSONResponse:
         role = require_gm(request)
         data = await payload(request)
-        return response(await call(
+        return response(await mutate(
             store.save, role, data, entry_id=entry_id, expected_revision=data.get("revision"),
         ))

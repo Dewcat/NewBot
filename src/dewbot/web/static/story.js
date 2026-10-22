@@ -4,6 +4,7 @@
   const states = {draft:'待定',confirmed:'已确认',withdrawn:'已撤回'};
   const kinds = {lore:'设定',character:'角色',event:'事件',clue:'线索'};
   let role = null, editing = null, next = null, generation = 0, busy = false;
+  let progress = null;
   function node(tag, text, className) {
     const n = document.createElement(tag);
     if (text !== undefined) n.textContent = text;
@@ -24,6 +25,7 @@
   function clearPrivateView() {
     generation++; role = null; editing = null;
     $('entries').replaceChildren(); $('controls').hidden = true; $('more').hidden = true;
+    $('progress-form').hidden = true; $('progress-label').textContent = '';
     $('editor').close(); $('edit-form').reset();
     $('audience').textContent = '请先返回主界面登录。';
   }
@@ -33,6 +35,8 @@
     for (const key of ['title','kind','world','chapter','status','visibility','body','source']) {
       if (item) form.elements.namedItem(key).value = item[key] || '';
     }
+    form.elements.namedItem('unlock_at').value = item ? item.unlock_at : 0;
+    form.elements.namedItem('ai_allowed').checked = !!(item && item.ai_allowed);
     $('edit-heading').textContent = item ? '编辑条目 · #' + item.id : '新增条目';
     $('editor').showModal();
     form.elements.namedItem('title').focus();
@@ -45,6 +49,7 @@
     if (role === 'gm') box.append(node('span', item.visibility === 'public' ? '玩家可见' : '仅管理人', 'badge'));
     box.append(node('p', item.body, 'body'));
     if (role === 'gm') {
+      box.append(node('div', '解锁进度 ' + item.unlock_at + (progress && item.unlock_at > progress.checkpoint ? ' · 尚未解锁' : '') + ' · AI ' + (item.ai_allowed ? '可选用' : '不提供'), 'meta'));
       if (item.source) box.append(node('p', '来源备注：' + item.source, 'source'));
       const edit = node('button', '编辑'); edit.addEventListener('click', () => openEditor(item));
       box.append(edit);
@@ -95,14 +100,29 @@
       if (changed) clearPrivateView();
       role = session.role;
       $('audience').textContent = role === 'gm'
-        ? '管理人视图：保存设定、线索与事件，决定哪些内容已经可以向玩家揭晓。'
-        : '玩家视图：这里收录已确认并向你公开的故事档案。';
+        ? '管理人视图：为笔记安排解锁进度，决定玩家与 AI 分别可以读取什么。'
+        : '这里收录随旅程逐步解锁的设定与见闻。';
       $('controls').hidden = false;
       $('create').hidden = $('status-filter-label').hidden = role !== 'gm';
-      if (changed) await load();
+      progress = await api('/api/story/progress');
+      $('progress-label').textContent = '当前进度：' + progress.label;
+      $('progress-form').hidden = role !== 'gm';
+      $('progress-form').elements.namedItem('checkpoint').value = progress.checkpoint;
+      $('progress-form').elements.namedItem('label').value = progress.label;
+      if (!$('editor').open) await load();
     } catch (err) { clearPrivateView(); $('notice').textContent = err.message; }
   }
   $('search-form').addEventListener('submit', e => {e.preventDefault(); load();});
+  $('progress-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    try {
+      await api('/api/story/progress', 'PUT', {
+        checkpoint: Number(e.target.elements.namedItem('checkpoint').value),
+        label: e.target.elements.namedItem('label').value, revision: progress.revision,
+      });
+      await boot();
+    } catch (err) { $('notice').textContent = err.message; }
+  });
   $('create').addEventListener('click', () => openEditor(null));
   $('cancel').addEventListener('click', () => {if (!busy) $('editor').close();});
   $('editor').addEventListener('cancel', e => {if (busy) e.preventDefault();});
@@ -110,6 +130,8 @@
   $('edit-form').addEventListener('submit', async e => {
     e.preventDefault(); if (busy) return;
     const data = Object.fromEntries(new FormData(e.target));
+    data.unlock_at = Number(data.unlock_at);
+    data.ai_allowed = e.target.elements.namedItem('ai_allowed').checked;
     if (editing) data.revision = editing.revision;
     busy = true; $('save').disabled = $('cancel').disabled = true; $('edit-error').textContent = '';
     try {

@@ -55,6 +55,9 @@ class Settings:
     web_secure_cookie: bool = False
     story_enabled: bool = False
     story_database_path: Path | None = None
+    ai_api_base: str | None = None
+    ai_api_key: str | None = None
+    ai_model: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -87,4 +90,7 @@ class Settings:
                 _resolve_path(os.environ["DEWBOT_STORY_DB_PATH"])
                 if os.getenv("DEWBOT_STORY_DB_PATH") else None
             ),
+            ai_api_base=os.getenv("DEWBOT_AI_API_BASE") or None,
+            ai_api_key=os.getenv("DEWBOT_AI_API_KEY") or None,
+            ai_model=os.getenv("DEWBOT_AI_MODEL") or None,
         )

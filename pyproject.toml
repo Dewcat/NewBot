@@ -12,6 +12,7 @@ dependencies = [
   "python-telegram-bot[socks]>=21,<22",
   "fastapi>=0.110,<1",
   "uvicorn>=0.30,<1",
+  "httpx>=0.27,<1",
 ]
 
 [project.optional-dependencies]

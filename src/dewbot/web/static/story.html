@@ -3,13 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>故事档案 · Dewbot</title>
+  <title>但丁笔记 · Dewbot</title>
   <link rel="stylesheet" href="story.css">
 </head>
 <body>
   <main>
-    <header><div><p class="eyebrow">DEWBOT / STORY ARCHIVE</p><h1>故事档案</h1></div><a href="/">返回故事与战斗</a></header>
+    <header><div><p class="eyebrow">DEWBOT / DANTE'S NOTES</p><h1>但丁笔记</h1></div><a href="/">返回故事与战斗</a></header>
     <p id="audience">正在检查登录状态…</p>
+    <p id="progress-label"></p>
+    <form id="progress-form" class="toolbar" hidden>
+      <label>当前进度<input name="checkpoint" type="number" min="0" max="99999" required></label>
+      <label>进度名称<input name="label" maxlength="120" required></label>
+      <button type="submit">更新解锁进度</button>
+    </form>
     <p id="notice" role="status"></p>
     <section id="controls" hidden>
       <form id="search-form" class="toolbar">
@@ -37,6 +43,9 @@
         <label>可见范围<select name="visibility"><option value="gm">仅管理人</option><option value="public">玩家可见</option></select></label>
       </div>
       <p class="hint">已确认不等于已经揭晓。只有“已确认 + 玩家可见”会出现在玩家档案与群聊查询中。</p>
+      <label>达到此进度后解锁<input name="unlock_at" type="number" min="0" max="99999" value="0" required></label>
+      <p class="hint">0：基础；100 / 200 / 300：第一至三章；410 / 420 / 430：第四章各部分。也可以自定义进度。</p>
+      <label class="check"><input name="ai_allowed" type="checkbox">允许管理人选入 AI 写作材料（与玩家可见范围独立）</label>
       <label>正文<textarea name="body" required maxlength="20000" rows="12"></textarea></label>
       <label>来源备注（始终仅管理人可见）<textarea name="source" maxlength="2000" rows="3" placeholder="例如：作者确认日期、讨论出处、尚待核对的记录"></textarea></label>
       <p id="edit-error" role="alert"></p>

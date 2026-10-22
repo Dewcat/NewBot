@@ -945,6 +945,19 @@ CREATE TABLE battle_defenses (
 """
 
 
+SCHEMA_V24 = r"""
+-- Legacy chat has no recorded consent and must never enter AI context by default.
+ALTER TABLE chat_messages ADD COLUMN ai_excluded INTEGER NOT NULL DEFAULT 1
+    CHECK(ai_excluded IN (0,1));
+CREATE TABLE ai_privacy (
+    id INTEGER PRIMARY KEY CHECK(id=1),
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+    epoch INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO ai_privacy(id) VALUES(1);
+"""
+
+
 MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     (1, "v2_initial_schema", SCHEMA_V1),
     (2, "content_extensions_and_page_state", SCHEMA_V2),
@@ -969,4 +982,5 @@ MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     (21, "setup_enemy_toggle", SCHEMA_V21),
     (22, "zero_action_character_templates", SCHEMA_V22),
     (23, "enemy_intents_and_defenses", SCHEMA_V23),
+    (24, "chat_ai_privacy", SCHEMA_V24),
 )
