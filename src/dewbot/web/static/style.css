@@ -803,6 +803,8 @@ select option { background: var(--bg-1); }
 .unit.dead { opacity: 0.55; filter: grayscale(0.7); }
 
 .unit-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 7px; }
+.unit.has-persona .unit-head { margin-bottom: 4px; }
+.unit-persona-row { display: flex; align-items: center; margin-bottom: 7px; }
 .unit-name { font-weight: 700; font-size: 14px; font-family: var(--font-display); letter-spacing: 0.5px; }
 .unit-tag {
   padding: 1px 7px;
@@ -813,6 +815,7 @@ select option { background: var(--bg-1); }
 }
 .unit-tag.core { background: var(--accent-soft); color: var(--accent-strong); }
 .unit-tag.assist { background: var(--violet-soft); color: var(--violet); }
+.unit-tag.persona { background: var(--violet-soft); color: #b8a7ef; border: 1px solid rgba(155,135,220,0.35); }
 .unit-tag.carried { background: var(--green-soft); color: #7cc793; }
 .unit-tag.locked { background: rgba(255,255,255,0.07); color: var(--text-faint); }
 .list-row.foe-off .row-main { opacity: 0.5; }
@@ -912,12 +915,38 @@ select option { background: var(--bg-1); }
 .pip.on { background: var(--accent); box-shadow: 0 0 4px rgba(199,155,59,0.6); }
 .coin-note { font-size: 11px; color: var(--text-faint); margin-left: auto; }
 /* 情感硬币：仿废墟图书馆角色栏硬币条——正面鲜绿、负面玫红的发光小方块 */
-.coin-track { display: inline-flex; flex-wrap: wrap; gap: 3px; align-items: center; margin-left: auto; }
-.coin { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.coin-track {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: center;
+  gap: 3px;
+  min-height: 9px;
+  margin-left: auto;
+  line-height: 0;
+}
+.coin {
+  display: block;
+  box-sizing: border-box;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex: 0 0 9px;
+  align-self: center;
+}
 .coin.pos { background: #3ddc5e; box-shadow: 0 0 5px rgba(61, 220, 94, 0.75); }
 .coin.neg { background: #e83a68; box-shadow: 0 0 5px rgba(232, 58, 104, 0.75); }
 
 .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+.effect-details-chip { cursor:pointer; font-family:inherit; text-align:left; }
+.effect-details-chip:hover { filter:brightness(1.2); }
+.effect-details-chip:focus-visible { outline:2px solid var(--accent-strong); outline-offset:2px; }
+.effect-description { white-space:pre-wrap; line-height:1.8; padding:8px 0; }
+.enemy-intent-detail { display:block; width:100%; text-align:left; color:inherit; font:inherit; cursor:pointer; }
+.enemy-intent-detail:hover { border-color:var(--accent-strong); }
+.intent-detail-hint { display:block; margin-top:6px; font-size:11px; color:var(--text-muted); }
+.target-edge { cursor:pointer; }
+.enemy-skill-details .skill-item { margin-top:12px; }
 .chip {
   padding: 2px 8px;
   border-radius: 20px;
@@ -1219,3 +1248,72 @@ select option { background: var(--bg-1); }
   .bubble { max-width: 92%; }
   .form-grid { grid-template-columns: 1fr; }
 }
+
+/* Attack directions share a viewBox with the unit anchors, including on resize. */
+#battle-strip { display: block; padding: 12px 14px; }
+.target-map-header { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.map-legend { display:flex; gap:14px; font-size:11px; flex-wrap:wrap; }
+.map-legend .red { color:#ff646b; } .map-legend .blue { color:#52c9ff; } .map-legend .yellow { color:#f2cd52; }
+.target-map { display:block; width:100%; max-height:360px; min-height:170px; }
+.target-edge.red { color:#ff646b; } .target-edge.blue { color:#52c9ff; } .target-edge.yellow { color:#f2cd52; }
+.edge-line { fill:none; stroke:currentColor; stroke-width:2.8; }
+.edge-hit { fill:none; stroke:transparent; stroke-width:18; pointer-events:stroke; }
+.target-edge.resolved .edge-line { stroke-dasharray:none; opacity:1; }
+.target-area.red { color:#ff646b; } .target-area.blue { color:#52c9ff; }
+.target-area { cursor:pointer; }
+.area-target-links { display:none; }
+.target-area.expanded .area-target-links { display:inline; }
+.area-unit-outline { fill:none; stroke:currentColor; stroke-width:1.6; opacity:.65; pointer-events:none; }
+.area-range { fill:none; stroke:currentColor; stroke-width:1.6; opacity:.7; pointer-events:none; }
+.area-badge > rect { fill:#23262e; stroke:currentColor; stroke-width:1.3; }
+.area-badge text { fill:currentColor; font-size:18px; font-weight:600; }
+.area-detail-button rect { fill:currentColor; opacity:.13; }
+.area-detail-button text { font-size:11px; }
+.area-detail-button:hover rect, .area-detail-button:focus rect { opacity:.3; }
+.target-area.expanded .area-unit-outline { stroke-width:2.2; opacity:1; }
+.target-area.expanded .area-summary .edge-line { opacity:.3; }
+.target-area.expanded .area-summary .edge-label { display:none; }
+.target-area:focus-visible .area-badge > rect { stroke-width:2.5; }
+.edge-label { fill:currentColor; font-size:16px; paint-order:stroke; stroke:#181a20; stroke-width:4; opacity:0; pointer-events:none; }
+.target-edge:hover .edge-label, .target-edge:focus .edge-label { opacity:1; }
+.target-edge:hover .edge-line, .target-edge:focus .edge-line { stroke-width:4; opacity:1; }
+.map-unit { cursor:pointer; } .map-unit rect { fill:#272b33; stroke:#505764; }
+.map-unit:hover rect, .map-unit:focus rect { stroke:#d3b96a; }
+.map-unit.fallen { opacity:.4; } .map-name { fill:#eee; font-size:14px; font-weight:600; }
+.map-hp { fill:#a9b2bf; font-size:10px; }
+
+
+#battle-strip { min-width:0; overflow:hidden; padding:10px 12px; }
+.target-map { width:100%; min-width:0; min-height:0; max-height:none; height:auto; aspect-ratio:900 / 380; overflow:hidden; }
+.target-map-header { min-width:0; flex-wrap:wrap; }
+.map-legend { gap:10px; }
+.target-map:focus, .target-map *:focus { outline:none !important; }
+.target-edge:focus-visible .edge-line { filter:drop-shadow(0 0 4px currentColor); stroke-width:4; }
+.meeting-spark { fill:#fff2ac; stroke:none; pointer-events:none; }
+.spark-shard { fill:url(#spark-trail); animation:spark-stream var(--spark-duration,.64s) linear infinite; animation-delay:var(--spark-delay,0s); }
+.spark-ember { animation:spark-debris var(--ember-duration,.87s) linear infinite; animation-delay:calc(var(--spark-delay,0s) - .19s); }
+.spark-ember-glow { fill:#ff4545; opacity:.65; filter:blur(1.6px); }
+.spark-ember-hot { fill:#ff7160; filter:drop-shadow(0 0 2px #ff3737); }
+@keyframes spark-stream { 0% { opacity:0; transform:translateX(0) scaleX(.35); } 8% { opacity:1; } 55% { opacity:.95; transform:translateX(calc(var(--spark-flight) * .55)) scaleX(1); } 100% { opacity:0; transform:translateX(var(--spark-flight)) scaleX(.65); } }
+@keyframes spark-debris { 0% { opacity:0; transform:translate(5px,0) scale(.6); } 15%,55% { opacity:.85; } 100% { opacity:0; transform:translate(var(--ember-flight),12px) scale(1.1); } }
+@media (prefers-reduced-motion:reduce) { .spark-shard, .spark-ember { animation:none; } .spark-shard { opacity:.85; } .spark-ember { opacity:0; } }
+.map-unit .map-body { fill:#272b33; stroke:#505764; }
+.map-unit rect.map-bar-track { fill:#151920; stroke:none; }
+.map-unit rect.map-hp-fill { fill:#d65a64; stroke:none; }
+.map-unit rect.map-stagger-fill { fill:#e8bf50; stroke:none; }
+.map-unit:focus-visible .map-body { stroke:#eed278; stroke-width:2; }
+.map-unit.staggered .map-body { stroke:#e8bf50; }
+.map-name { font-size:18px; } .map-hp { font-size:14px; fill:#c8d0dc; }
+.forecast { font-weight:700; font-size:14px; }
+.forecast.tier-0 { color:#c32f46; } .forecast.tier-1 { color:#ff9ba5; }
+.forecast.tier-2 { color:#fff; } .forecast.tier-3 { color:#ffe5a3; }
+.forecast.tier-4 { color:#ffda39; }
+.forecast-note { color:var(--text-muted); font-size:12px; line-height:1.6; padding:8px; }
+@media(max-width:600px) { #battle-strip { padding:8px; } .map-legend { font-size:10px; gap:8px; } }
+
+/* The battlefield keeps the same viewport share at desktop/mobile zoom levels. */
+#battle-strip { height:32vh; height:32dvh; flex:0 0 32vh; flex-basis:32dvh; max-height:32dvh; min-height:0; box-sizing:border-box; display:flex; flex-direction:column; gap:4px; }
+.target-map-header { width:100%; flex:0 0 auto; }
+.target-map { flex:1 1 0; width:100%; height:0; min-height:0; max-height:100%; aspect-ratio:auto; }
+.map-edge-layer .edge-line { filter:drop-shadow(0 0 2px currentColor) drop-shadow(0 0 5px color-mix(in srgb,currentColor 35%,transparent)); }
+.map-hover-layer .map-body { stroke:#dfc97f; stroke-width:1.5; filter:drop-shadow(0 2px 5px #0008); }

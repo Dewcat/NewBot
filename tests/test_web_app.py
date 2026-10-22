@@ -368,6 +368,7 @@ def _launch_battle(gm: TestClient) -> dict[str, int]:
     launched = gm.post("/api/setup/launch", json={"revision": revision})
     assert launched.status_code == 200
     ids["battle_id"] = int(launched.json()["battle_id"])
+    assert gm.post("/api/battle/lock-intents").status_code == 200
     return ids
 
 
@@ -417,7 +418,18 @@ def test_full_round_flow_over_the_api(
 
     battle = gm.get("/api/battle").json()
     assert int(battle["id"]) == battle_id
-    assert battle["phase"] == BattlePhase.FRIENDLY_ACTION.value
+    assert battle["phase"] == BattlePhase.ENEMY_PLANNING.value
+    enemy = next(p for p in battle["participants"] if p["faction"] == "ENEMY")
+    enemy_skill = next(s for s in gm.get(f"/api/actors/{enemy['id']}/skills").json() if s["available"])
+    hp_before = web.engine.get_character(ids["helper_id"])["current_hp"]
+    planned = gm.post("/api/battle/action", json={"actor_id": enemy["id"], "skill_id": enemy_skill["id"], "target_ids": [ids["helper_id"]]})
+    assert planned.status_code == 200
+    assert web.engine.get_character(ids["helper_id"])["current_hp"] == hp_before
+    assert player.post("/api/battle/lock-intents").status_code == 403
+    assert gm.post("/api/battle/lock-intents").status_code == 200
+    visible = player.get("/api/battle").json()["enemy_intents"]
+    assert visible[0]["skill_name"] == enemy_skill["name"]
+    assert visible[0]["target_ids"] == [ids["helper_id"]]
     assert int(battle["current_turn"]) == 1
 
     # 玩家的行动名单只含核心；助战由 GM 扮演（2026-07-27 裁定）。
@@ -471,12 +483,12 @@ def test_full_round_flow_over_the_api(
     assert settled.json()["messages"]
 
     after = gm.get("/api/battle").json()
-    assert after["phase"] == BattlePhase.FRIENDLY_ACTION.value
+    assert after["phase"] == BattlePhase.ENEMY_PLANNING.value
     assert int(after["current_turn"]) == 2
 
     session = player.get("/api/session").json()
     assert session["has_active_battle"] is True
-    assert session["phase"] == BattlePhase.FRIENDLY_ACTION.value
+    assert session["phase"] == BattlePhase.ENEMY_PLANNING.value
 
 
 # ---------------------------------------------------------------------------
@@ -709,6 +721,60 @@ def test_channel_history_merges_chat_messages(gm: TestClient) -> None:
         item["type"] == "chat" and item["message"]["content"] == "序幕开始。"
         for item in items
     )
+
+
+def test_channel_history_keeps_factions_after_battle_stops(
+    gm: TestClient, player: TestClient
+) -> None:
+    _launch_battle(gm)
+    battle = gm.get("/api/battle").json()
+    friendly_name = next(
+        item["name"]
+        for item in battle["participants"]
+        if item["faction"] == Faction.FRIENDLY.value
+    )
+
+    stopped = gm.post("/api/battle/stop")
+    assert stopped.status_code == 200
+    items = player.get("/api/channel/history").json()["items"]
+    log_items = [item for item in items if item["type"] == "log"]
+
+    assert log_items
+    assert any(
+        {"name": friendly_name, "faction": Faction.FRIENDLY.value}
+        in item["factions"]
+        for item in log_items
+    )
+
+
+def test_static_ui_has_no_direct_launch_entry(gm: TestClient) -> None:
+    response = gm.get("/static/app.js")
+    assert response.status_code == 200
+    assert "直接触发" not in response.text
+    assert "openLaunchWizard" not in response.text
+    assert "learnFactions(item.factions);" in response.text
+
+
+def test_emotion_coins_use_fixed_centered_boxes(gm: TestClient) -> None:
+    response = gm.get("/static/style.css")
+    assert response.status_code == 200
+    assert "line-height: 0;" in response.text
+    assert "align-content: center;" in response.text
+    assert "flex: 0 0 9px;" in response.text
+
+
+def test_core_status_includes_current_persona(gm: TestClient) -> None:
+    _launch_battle(gm)
+    participants = gm.get("/api/battle").json()["participants"]
+    core = next(item for item in participants if int(item["is_core"]) == 1)
+
+    assert core["persona_key"]
+    assert core["persona_name"]
+
+    app = gm.get("/static/app.js")
+    assert app.status_code == 200
+    assert "class: 'unit-persona-row'" in app.text
+    assert "'人格 · ' + unit.persona_name" in app.text
 
 
 # ---------------------------------------------------------------------------
@@ -1010,3 +1076,63 @@ def test_mid_battle_reinforcements_join_immediately(gm: TestClient) -> None:
         int(p["id"]) == helper_id and int(p["active_in_stage"]) == 1
         for p in participants
     )
+
+
+def test_player_defense_is_deferred_and_permission_checked(gm: TestClient, player: TestClient, web: SimpleNamespace):
+    ids = _launch_battle(gm)
+    assert player.post("/api/battle/defend", json={"actor_id": ids["helper_id"]}).status_code == 403
+    assert gm.post("/api/battle/forfeit-assists").status_code == 200
+    hp = web.engine.get_character(ids["core_id"])["current_hp"]
+    response = player.post("/api/battle/defend", json={"actor_id": ids["core_id"]})
+    assert response.status_code == 200
+    status = player.get("/api/battle").json()
+    assert status["defenses"][0]["actor_id"] == ids["core_id"]
+    assert web.engine.get_character(ids["core_id"])["current_hp"] == hp
+
+
+def test_enemy_settlement_requests_paced_broadcast(web, gm):
+    from asyncio import Queue
+    _launch_battle(gm)
+    assert gm.post("/api/battle/pass").status_code == 200
+    queue=Queue()
+    web.app.state.sse_clients.add(queue)
+    try:
+        response=gm.post("/api/battle/settle")
+        assert response.status_code == 200
+        events=[]
+        while not queue.empty():
+            events.append(queue.get_nowait())
+        log=next(event for event in events if 'event: log' in event)
+        data=json.loads(next(line[6:] for line in log.splitlines() if line.startswith('data: ')))
+        assert data['interval_ms']==1500
+        assert data['lines']
+    finally:
+        web.app.state.sse_clients.discard(queue)
+
+
+def test_assist_hands_over_automatically_and_all_actions_are_paced(web, gm, player):
+    from asyncio import Queue
+    ids = _launch_battle(gm)
+    with web.engine.database.transaction() as c:
+        c.execute("UPDATE characters SET current_actions=1 WHERE id=?", (ids["helper_id"],))
+    queue = Queue()
+    web.app.state.sse_clients.add(queue)
+    try:
+        for actor_id, client in [(ids["helper_id"], gm), (ids["core_id"], player)]:
+            skills = client.get(f"/api/actors/{actor_id}/skills").json()
+            skill = next(s for s in skills if s["available"] and s["target_scope"] == "ENEMY")
+            targets = client.get(f"/api/actors/{actor_id}/skills/{skill['id']}/targets").json()
+            response = client.post("/api/battle/action", json={"actor_id": actor_id, "skill_id": skill["id"], "target_ids": [targets[0]["id"]]})
+            assert response.status_code == 200, response.text
+            events = []
+            while not queue.empty():
+                events.append(queue.get_nowait())
+            log = next(event for event in events if 'event: log' in event)
+            payload = json.loads(next(line[6:] for line in log.splitlines() if line.startswith('data: ')))
+            assert payload["interval_ms"] == 1500
+            if actor_id == ids["helper_id"]:
+                assert web.engine.get_character(actor_id)["current_actions"] == 0
+                assert response.json()["phase"] == "FRIENDLY_ACTION"
+                # No forfeit/manual transition: the player's action above must now succeed.
+    finally:
+        web.app.state.sse_clients.discard(queue)

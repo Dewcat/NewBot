@@ -244,7 +244,7 @@
       "max_actions": 1,
       "max_stagger": 60,
       "default": false,
-      "metadata": {"legacy_defense_level": 3, "source": "Dewcat/DewBot + 原始人格说明"},
+      "metadata": {"legacy_defense_level": 3, "source": "Dewcat/DewBot + 原始人格说明", "defense_skill": {"kind": "INTERCEPT", "name": "拦截", "power": "1d6+4"}},
       "skills": ["skill.jue.loosen_muscles", "skill.jue.again_again", "skill.jue.caged_dogfight"]
     },
     {
@@ -267,7 +267,7 @@
       "max_actions": 1,
       "max_stagger": 55,
       "default": false,
-      "metadata": {"legacy_defense_level": 2, "source": "Dewcat/DewBot + 原始人格说明"},
+      "metadata": {"legacy_defense_level": 2, "source": "Dewcat/DewBot + 原始人格说明", "defense_skill": {"kind": "MEET", "name": "迎击", "power": "1d6+4"}},
       "skills": ["skill.lu.fortune_favors", "skill.lu.throat_slit", "skill.lu.bone_deep_blade", "skill.lu.mutilate"]
     },
     {

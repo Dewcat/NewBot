@@ -13,6 +13,7 @@ const PHASE_LABELS = {
   BATTLE_START: '战斗开始',
   STAGE_SELECTION: '阶段编成',
   TURN_START: '回合开始',
+  ENEMY_PLANNING: '敌方准备',
   FRIENDLY_ACTION: '我方行动',
   ENEMY_ACTION: '敌方行动',
   TURN_END: '回合清算',
@@ -338,6 +339,46 @@ function confirmModal(opts) {
 
 /* ================= SSE 实时流 ================= */
 
+function createLogPlayback(emit, schedule = setTimeout, cancel = clearTimeout) {
+  let queue = [], timer = null;
+  const drain = () => {
+    timer = null;
+    const item = queue.shift();
+    if (!item) return;
+    emit(item.lines);
+    // Keep the gap even after the last entry, so another event cannot overtake it.
+    timer = schedule(() => { timer = null; if (queue.length) drain(); }, item.delay);
+  };
+  return {
+    enqueue(lines, interval = 0) {
+      const pieces = lines.flatMap(raw => String(raw).split('\n')).map(line => line.trim()).filter(Boolean);
+      if (!pieces.length) return;
+      if (!interval && timer === null && !queue.length) { emit(pieces); return; }
+      // A trigger/action and its result details are one presentation unit.
+      // Phase banners stay separate from any standalone effects that follow.
+      const effects = [];
+      let acceptsDetails = false;
+      for (const line of pieces) {
+        const detail = /^(?:[└├│]|──)/.test(line);
+        if (detail && acceptsDetails && effects.length) effects[effects.length-1].push(line);
+        else {
+          effects.push([line]);
+          acceptsDetails = !/^[【▣]/.test(line) && !detail;
+        }
+      }
+      const delay = interval || 1500;
+      queue.push(...effects.map(lines => ({ lines, delay })));
+      if (timer === null) drain();
+    },
+    reset() { if (timer !== null) cancel(timer); timer = null; queue = []; },
+  };
+}
+
+const logPlayback = createLogPlayback(lines => {
+  ensureDateDivider(new Date());
+  appendLogLines(lines, false);
+});
+
 function setConnState(on) {
   if (!dom.connState) return;
   dom.connState.classList.toggle('on', !!on);
@@ -346,6 +387,7 @@ function setConnState(on) {
 }
 
 function closeSSE() {
+  logPlayback.reset();
   if (state.sse) {
     try { state.sse.close(); } catch (err) { /* 忽略 */ }
     state.sse = null;
@@ -371,8 +413,7 @@ function connectSSE() {
     try { payload = JSON.parse(event.data); } catch (err) { return; }
     const lines = payload && Array.isArray(payload.lines) ? payload.lines : [];
     if (!lines.length) return;
-    ensureDateDivider(new Date());
-    appendLogLines(lines, false);
+    logPlayback.enqueue(lines, toInt(payload.interval_ms, 0));
   });
   source.addEventListener('chat', (event) => {
     let payload = null;
@@ -418,6 +459,7 @@ function logEmptyNote() {
 }
 
 function resetLog() {
+  logPlayback.reset();
   lastBubble = null;
   state.chatNodes.clear();
   state.channelDateKey = null;
@@ -750,6 +792,9 @@ async function loadChannelHistory() {
       appendChatMessage(item.message);
     } else {
       ensureDateDivider(chatDate(item.created_at));
+      // 已结束/中止的战斗在刷新后不再出现在 overview 中；历史项自带当场
+      // 参战者阵营，确保行动气泡仍按玩家视角稳定分列。
+      learnFactions(item.factions);
       // 活跃战斗的当前回合保持"活跃"样式，只有更早的播报置灰。
       for (const piece of String(item.message || '').split('\n')) {
         const line = piece.replace(/\s+$/, '');
@@ -880,6 +925,22 @@ function unitHasTag(unit, tag) {
   }
 }
 
+function effectDetailsChip(text, extraClass, name, description, context = '') {
+  const details = String(description || '').trim() || '暂无效果说明。';
+  const content = context ? context + '\n\n' + details : details;
+  return el('button', {
+    type:'button', class:'chip effect-details-chip' + (extraClass ? ' ' + extraClass : ''),
+    title:content, 'aria-label':name + '：' + content,
+    onclick:event => {
+      event.stopPropagation();
+      const modal = openModal({title:name});
+      if (!modal) return;
+      modal.setBody(el('div', {class:'effect-description'}, content));
+      modal.setFooter(el('button', {class:'btn ghost', type:'button', onclick:closeModal}, '关闭'));
+    }
+  }, text);
+}
+
 function effectChip(effect) {
   const key = String(effect.effect_key || '');
   const name = effect.effect_name || EFFECT_NAMES[key] || key || '效果';
@@ -892,7 +953,7 @@ function effectChip(effect) {
     text += '｜' + effect.remaining_turns + '回合';
   }
   const cls = BUFF_KEYS.has(key) ? 'buff' : DEBUFF_KEYS.has(key) ? 'debuff' : '';
-  return tintChip(chip(text, cls, key), EFFECT_COLORS[key]);
+  return tintChip(effectDetailsChip(text, cls, name, effect.effect_description), EFFECT_COLORS[key]);
 }
 
 function pendingChip(effect) {
@@ -904,7 +965,7 @@ function pendingChip(effect) {
   if (intensity) text += ' ' + intensity;
   if (stacks) text += ' ×' + stacks;
   return tintChip(
-    chip(text, '', key + '｜回合 ' + effect.activate_at + ' 生效'),
+    effectDetailsChip(text, '', name, effect.effect_description, '第 ' + effect.activate_at + ' 回合生效'),
     EFFECT_COLORS[key]);
 }
 
@@ -952,6 +1013,14 @@ function unitCard(unit) {
       '混乱' + (toInt(unit.stagger_turns, 0) > 0 ? '｜' + unit.stagger_turns + '回合' : '')));
   }
   card.append(head);
+  if (toInt(unit.is_core, 0) && unit.persona_name) {
+    card.classList.add('has-persona');
+    card.append(el('div', { class: 'unit-persona-row' },
+      el('span', {
+        class: 'unit-tag persona',
+        title: '当前人格：' + unit.persona_name,
+      }, '人格 · ' + unit.persona_name)));
+  }
 
   card.append(miniBar('hp', 'HP', hp, maxHp, hp / maxHp <= 0.3 ? 'low' : ''));
   // 混乱中显示空条（黄色轨道标识），解除混乱后回满。
@@ -1005,9 +1074,9 @@ function unitCard(unit) {
       el('span', { class: 'pending-label' }, '书页'),
       el('div', { class: 'chips' }, ownPages.map((page) => {
         const isAwakening = page.page_type === 'AWAKENING';
-        return chip(pageLevelLabel(page.level) + ' ' + (page.name || ''),
+        return effectDetailsChip(pageLevelLabel(page.level) + ' ' + (page.name || ''),
           isAwakening ? 'type-awaken' : 'type-break',
-          isAwakening ? '觉醒书页' : '崩溃书页');
+          page.name || '书页', page.description);
       }))));
   }
   return card;
@@ -1029,7 +1098,7 @@ function teamCarryBox(friendlyUnits) {
   return el('div', { class: 'carry-box' },
     el('span', { class: 'pending-label' }, '携带被动'),
     el('div', { class: 'chips' },
-      carry.map((page) => chip(page.name || '', 'buff', '全队生效'))));
+      carry.map((page) => effectDetailsChip(page.name || '', 'buff', page.name || '携带被动', page.description))));
 }
 
 function renderStatusColumn() {
@@ -1045,6 +1114,18 @@ function renderStatusColumn() {
     }
     dom.statusList.append(note);
     return;
+  }
+  const intents = battle.phase === 'ENEMY_PLANNING' && state.role !== 'gm' ? [] : battle.enemy_intents || [];
+  if (intents.length) {
+    dom.statusList.append(el('div', { class: 'faction-title enemy' }, '敌方行动'));
+    for (const intent of intents) {
+      dom.statusList.append(el('button', { type:'button', class:'unit enemy-intent-detail', title: intent.skill_description || '点击查看技能效果', onclick:()=>openEnemyIntentDetails(intent) },
+        enemyIntentLabel(intent)
+        + ((intent.additional_target_names || []).length ? '；附加目标：' + intent.additional_target_names.join('、') : '')
+        + (intent.disabled ? '〔已混乱或倒下，将取消〕' : '')
+        + (intent.status !== 'PENDING' ? '〔已处理〕' : ''),
+        el('span',{class:'intent-detail-hint'},'查看技能详情')));
+    }
   }
   const active = battle.participants.filter((p) => p && toInt(p.active_in_stage, 0) === 1);
   const friendly = active.filter((p) => p.faction === 'FRIENDLY');
@@ -1115,6 +1196,253 @@ function renderNoticeBanner() {
     }, '前往确认'));
 }
 
+function renderTargetMap(battle, enemies, friendlies) {
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = (tag, attrs = {}, text = '') => {
+    const node = document.createElementNS(svgNS, tag);
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+    if (text) node.textContent = text;
+    return node;
+  };
+  const height = 380;
+  const canvas = svg('svg', { viewBox: '0 0 900 ' + height, class: 'target-map', role: 'img', 'aria-label': '战场攻击方向：红色敌方攻击，蓝色我方已行动，黄色防御响应' });
+  const defs = svg('defs');
+  for (const [key, color] of Object.entries({ red: '#ff646b', blue: '#52c9ff', yellow: '#f2cd52' })) {
+    const marker = svg('marker', { id: 'attack-tip-' + key, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' });
+    marker.append(svg('path', { d: 'M 0 0 L 10 5 L 0 10 z', fill: color })); defs.append(marker);
+  }
+  const sparkTrail = svg('linearGradient', {id:'spark-trail', x1:'0%', y1:'0%', x2:'100%', y2:'0%'});
+  for (const [offset, color, opacity] of [['0%','#ee7733',0], ['45%','#ffc854',.55], ['85%','#fff1ad',1], ['100%','#fffcec',1]]) {
+    sparkTrail.append(svg('stop', {offset, 'stop-color':color, 'stop-opacity':opacity}));
+  }
+  defs.append(sparkTrail);
+  canvas.append(defs);
+  const unitLayer = svg('g', {class:'map-unit-layer'});
+  const edgeLayer = svg('g', {class:'map-edge-layer'});
+  const hoverLayer = svg('g', {class:'map-hover-layer'});
+  canvas.append(unitLayer, edgeLayer, hoverLayer);
+  const unitNodes = new Map();
+  let lifted = null;
+  const liftUnit = node => {
+    if (node === lifted) return;
+    if (lifted) unitLayer.append(lifted);
+    lifted = node;
+    if (node) hoverLayer.append(node);
+  };
+  const positions = new Map();
+  // Both factions occupy two staggered ranks; friendly units face right.
+  for (const [units, origin, reverse] of [[friendlies, 22, false], [enemies, 480, true]]) {
+    const columns = Math.max(1, Math.ceil(units.length / 2));
+    const step = 395 / (columns + .35);
+    const width = Math.min(122, step - 10);
+    units.forEach((unit, index) => {
+      const rank = index % 2, column = Math.floor(index / 2);
+      const x = origin + (reverse ? columns - 1 - column : column) * step + rank * step * .32;
+      positions.set(unit.id, { unit, x, y: 192 + rank * 98, width });
+    });
+  }
+  const edges = [], areas = [];
+  const defended = (target, intent = null) => (battle.defenses || []).some(d => d.actor_id === target && d.active
+    && (['GUARD', 'EVADE'].includes(d.kind)
+      || (['INTERCEPT', 'MEET'].includes(d.kind) && intent && d.intent_id === intent.id && intent.redirect?.actor_id === target)))
+    && positions.has(target) && !positions.get(target).unit.is_staggered && positions.get(target).unit.current_hp > 0;
+  const addAttack = (actorId, targets, areaTargets, color, label, intent = null, resolved = false) => {
+    const validTargets = [...new Set(targets)].filter(id => positions.has(id) && (resolved || positions.get(id).unit.current_hp > 0));
+    const covered = [...new Set(areaTargets || [])].filter(id => validTargets.includes(id));
+    let area = null;
+    if (covered.length) {
+      area = {targets:covered, color, label, intent, index:areas.length};
+      areas.push(area);
+      edges.push({from:actorId, area, summary:true, color, label, resolved});
+    }
+    for (const target of validTargets) {
+      const responds = !resolved && defended(target,intent);
+      edges.push({from:actorId, to:target, color:responds ? 'yellow' : color, label,
+        forecast:responds ? (intent.response_forecasts || {})[target] : null, intent, resolved,
+        area:area && covered.includes(target) ? area : null});
+    }
+  };
+  for (const intent of battle.enemy_intents || []) {
+    if (battle.phase === 'ENEMY_PLANNING') continue;
+    if (intent.status !== 'PENDING' || intent.disabled) continue;
+    const attacker = positions.get(intent.actor_id)?.unit;
+    if (!attacker || attacker.current_hp <= 0 || attacker.is_staggered) continue;
+    const targets = intent.attack_target_ids || intent.effective_target_ids || intent.target_ids;
+    addAttack(intent.actor_id, targets, intent.area_target_ids, 'red', enemyIntentLabel(intent), intent);
+  }
+  for (const attack of battle.friendly_attacks || []) {
+    addAttack(attack.actor_id, attack.target_ids, attack.area_target_ids, 'blue', attack.skill_name + ' · 已行动', null, true);
+  }
+  let pinnedArea = null;
+  for (const area of areas) {
+    const covered = area.targets.map(id=>positions.get(id));
+    const left = Math.min(...covered.map(p=>p.x))-5, right = Math.max(...covered.map(p=>p.x+p.width))+5;
+    const y = Math.min(...covered.map(p=>p.y))-24-(area.index%4)*27;
+    const center = Math.max(95,Math.min(805,(left+right)/2));
+    area.anchor = {x:center-1, y:y-24, width:2};
+    const bothSides = new Set(covered.map(p=>p.unit.faction)).size>1;
+    const title = (bothSides ? '无差别攻击' : '全体攻击') + ' · ' + covered.length + '人';
+    area.node = svg('g', {class:'target-area '+area.color, tabindex:0, role:'button', 'aria-label':area.label+'，'+title+'，展开目标连线', 'aria-expanded':'false'});
+    area.summary = svg('g',{class:'area-summary'});
+    area.details = svg('g',{class:'area-target-links'});
+    area.node.append(area.summary, area.details);
+    const setExpanded = expanded => { area.node.classList.toggle('expanded',expanded); area.node.setAttribute('aria-expanded',String(expanded)); };
+    const toggle = () => {
+      const wasPinned = pinnedArea===area;
+      if (pinnedArea && pinnedArea!==area) { pinnedArea.node.classList.remove('expanded'); pinnedArea.node.setAttribute('aria-expanded','false'); }
+      pinnedArea = wasPinned ? null : area;
+      setExpanded(!wasPinned);
+    };
+    area.node.addEventListener('pointerenter',()=>setExpanded(true));
+    area.node.addEventListener('pointerleave',()=>setExpanded(pinnedArea===area));
+    area.node.addEventListener('focus',()=>setExpanded(true));
+    area.node.addEventListener('blur',event=>{if (!area.node.contains(event.relatedTarget)) setExpanded(pinnedArea===area);});
+    area.node.addEventListener('keydown',event=>{
+      if (event.target!==area.node) return;
+      if (event.key==='Enter' || event.key===' ') {event.preventDefault();toggle();}
+      if (event.key==='Escape') {pinnedArea=null;setExpanded(false);}
+    });
+    area.summary.addEventListener('click',toggle);
+    area.toggle = toggle;
+    for (const p of covered) area.summary.append(svg('rect',{x:p.x-4,y:p.y-4,width:p.width+8,height:72,rx:10,class:'area-unit-outline'}));
+    area.summary.append(svg('path',{d:`M ${left} ${y+8} V ${y} H ${right} V ${y+8}`,class:'area-range'}));
+    const badge = svg('g',{class:'area-badge'});
+    badge.append(svg('rect',{x:center-86,y:y-29,width:172,height:25,rx:6}));
+    badge.append(svg('text',{x:center-(area.intent ? 21 : 0),y:y-12,'text-anchor':'middle'},title));
+    if (area.intent) {
+      const detail = svg('g',{class:'area-detail-button',tabindex:0,role:'button','aria-label':'查看'+area.intent.skill_name+'详情'});
+      detail.append(svg('rect',{x:center+48,y:y-27,width:35,height:21,rx:4}));
+      detail.append(svg('text',{x:center+65,y:y-12,'text-anchor':'middle'},'详情'));
+      detail.addEventListener('click',event=>{event.stopPropagation();openEnemyIntentDetails(area.intent);});
+      detail.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openEnemyIntentDetails(area.intent);}});
+      badge.append(detail);
+    }
+    area.node.append(badge);
+    badge.addEventListener('click',toggle);
+    edgeLayer.append(area.node);
+  }
+  for (const [index, edge] of edges.entries()) {
+    const from = positions.get(edge.from), to = edge.summary ? edge.area.anchor : positions.get(edge.to);
+    if (!from || !to) continue;
+    const start = {x: from.x + from.width / 2, y: from.y - 7};
+    const end = {x: to.x + to.width / 2, y: to.y - 7};
+    const archHeight = 72 + (index % 4) * 16;
+    const control = {x: (start.x + end.x) / 2, y: 2 * archHeight - (start.y + end.y) / 2};
+    const mix = (a,b,t) => ({x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t});
+    const at = t => mix(mix(start,control,t),mix(control,end,t),t);
+    const path = (a,c,b) => `M ${a.x} ${a.y} Q ${c.x} ${c.y} ${b.x} ${b.y}`;
+    const group = svg('g', { class: 'target-edge ' + edge.color + (edge.resolved ? ' resolved' : ''), tabindex: 0, role: 'button', 'aria-label': edge.label + (edge.forecast ? '，' + edge.forecast.label : '') });
+    if (edge.summary) {
+      group.setAttribute('aria-label',edge.label+'，展开群体目标');
+      group.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();edge.area.toggle();}});
+    } else if (edge.intent) {
+      group.addEventListener('click',()=>openEnemyIntentDetails(edge.intent));
+      group.addEventListener('keydown',event=>{
+        if (event.key==='Enter' || event.key===' ') { event.preventDefault(); openEnemyIntentDetails(edge.intent); }
+      });
+    }
+    const whole = path(start,control,end);
+    group.append(svg('path', { d:whole, class:'edge-hit' }));
+    let labelPosition = at(.5);
+    if (edge.color === 'yellow') {
+      const tier = edge.forecast ? edge.forecast.tier : 2;
+      // Parameter measured from attacker: a stronger defender reaches farther.
+      const fraction = [.80,.66,.50,.34,.20][tier];
+      const lengths = [0]; let previous = start;
+      for (let sample=1; sample<=80; sample++) {
+        const current=at(sample/80);lengths.push(lengths[sample-1]+Math.hypot(current.x-previous.x,current.y-previous.y));previous=current;
+      }
+      const desired=lengths[80]*fraction;
+      let segment=1;while(segment<80 && lengths[segment]<desired) segment++;
+      const meeting=(segment-1+(desired-lengths[segment-1])/Math.max(.001,lengths[segment]-lengths[segment-1]))/80;
+      const tangent = {
+        x:2*((1-meeting)*(control.x-start.x)+meeting*(end.x-control.x)),
+        y:2*((1-meeting)*(control.y-start.y)+meeting*(end.y-control.y))
+      };
+      // Keep the visible arrow tips almost touching, independent of arc length.
+      const halfGap = 2.4 / Math.max(1,Math.hypot(tangent.x,tangent.y));
+      const left = meeting - halfGap, right = meeting + halfGap;
+      group.append(svg('path', { d:path(start,mix(start,control,left),at(left)), class:'edge-line opposing-attacker', 'marker-end':'url(#attack-tip-yellow)' }));
+      group.append(svg('path', { d:path(end,mix(end,control,1-right),at(right)), class:'edge-line opposing-defender', 'marker-end':'url(#attack-tip-yellow)' }));
+      labelPosition = at(meeting);
+      const spark = svg('g', {class:'meeting-spark', transform:`translate(${labelPosition.x},${labelPosition.y})`, 'aria-hidden':'true'});
+      // Visual randomness only: sparse streams scatter anew on each flight.
+      const normal = Math.atan2(tangent.y,tangent.x)*180/Math.PI+90;
+      const scatter = direction => {
+        const angle = Math.random()<.75
+          ? normal+(Math.random()<.6 ? 0 : 180)+(Math.random()-.5)*105
+          : Math.random()*360;
+        direction.setAttribute('transform',`rotate(${angle})`);
+        direction.style.setProperty('--spark-flight',`${12+Math.random()*22}px`);
+        direction.style.setProperty('--ember-flight',`${24+Math.random()*24}px`);
+      };
+      for (let ray=0; ray<9; ray++) {
+        const direction = svg('g', {style:`--spark-duration:${.45+Math.random()*.4}s;--spark-delay:-${Math.random()*2}s`});
+        const shard = svg('path', {class:'spark-shard'});
+        const emit = () => {
+          scatter(direction);
+          const length = 7+Math.random()*13, thickness = .35+Math.random()*.5;
+          shard.setAttribute('d',`M 0 0 L ${length} ${-thickness} L ${length+2} 0 L ${length} ${thickness} Z`);
+        };
+        emit(); shard.addEventListener('animationiteration',emit);
+        direction.append(shard);
+        spark.append(direction);
+      }
+      for (let fleck=0; fleck<2; fleck++) {
+        const direction = svg('g', {style:`--ember-duration:${.8+Math.random()*.5}s;--spark-delay:-${Math.random()*2}s`});
+        const ember = svg('g', {class:'spark-ember'});
+        ember.append(svg('ellipse', {cx:8, cy:0, rx:3.5, ry:2.6, class:'spark-ember-glow'}));
+        ember.append(svg('circle', {cx:8, cy:0, r:1.25, class:'spark-ember-hot'}));
+        scatter(direction);
+        ember.addEventListener('animationiteration',()=>scatter(direction));
+        direction.append(ember);
+        spark.append(direction);
+      }
+      group.append(spark);
+    } else {
+      group.append(svg('path', { d:whole, class:'edge-line', 'marker-end':'url(#attack-tip-' + edge.color + ')' }));
+    }
+    const label = edge.label + (edge.forecast ? ' · ' + edge.forecast.label : '');
+    group.append(svg('text', { x:Math.max(180,Math.min(720,labelPosition.x)), y:labelPosition.y-13, 'text-anchor':'middle', class:'edge-label' }, label));
+    if (edge.area) (edge.summary ? edge.area.summary : edge.area.details).append(group);
+    else edgeLayer.append(group);
+  }
+  for (const {unit, x, y, width} of positions.values()) {
+    const hp = Math.max(0,unit.current_hp), maxHp=Math.max(1,unit.max_hp || 1);
+    const stagger = unit.is_staggered ? 0 : Math.max(0,unit.current_stagger || 0), maxStagger=Math.max(1,unit.max_stagger || 1);
+    const group = svg('g', { class:'map-unit' + (hp<=0?' fallen':'') + (unit.is_staggered?' staggered':''), transform:`translate(${x},${y})`, tabindex:0, role:'button', 'aria-label':unit.name+'，生命 '+hp+'/'+maxHp+'，混乱耐性 '+stagger+'/'+maxStagger });
+    group.append(svg('rect', { width, height:64, rx:8, class:'map-body' }));
+    const name=svg('text',{x:9,y:21,class:'map-name'},unit.name);
+    const nameWidth = [...unit.name].reduce((size, char) => size + (char.charCodeAt(0) > 255 ? 18 : 10), 0);
+    if (nameWidth>width-18) {name.setAttribute('textLength',width-18);name.setAttribute('lengthAdjust','spacingAndGlyphs');}
+    group.append(name);
+    const hpLabel = hp+'/'+maxHp + (unit.is_staggered?' · 混乱':'');
+    const hpText = svg('text',{x:9,y:37,class:'map-hp'},hpLabel);
+    const hpWidth = [...hpLabel].reduce((size, char) => size + (char.charCodeAt(0) > 255 ? 14 : 8.4), 0);
+    if (hpWidth>width-18) {hpText.setAttribute('textLength',width-18);hpText.setAttribute('lengthAdjust','spacingAndGlyphs');}
+    group.append(hpText);
+    group.append(svg('rect',{x:9,y:43,width:width-18,height:7,rx:3,class:'map-bar-track'}));
+    group.append(svg('rect',{x:9,y:43,width:(width-18)*Math.min(1,hp/maxHp),height:7,rx:3,class:'map-hp-fill'}));
+    group.append(svg('rect',{x:9,y:55,width:width-18,height:5,rx:2,class:'map-bar-track'}));
+    group.append(svg('rect',{x:9,y:55,width:(width-18)*Math.min(1,stagger/maxStagger),height:5,rx:2,class:'map-stagger-fill'}));
+    const show=()=>{const modal=openModal({title:unit.name});if(modal)modal.setBody(unitCard(unit));};
+    group.addEventListener('click',show);group.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();show();}});
+    group.addEventListener('focus',()=>liftUnit(group));
+    group.addEventListener('blur',()=>liftUnit(null));
+    unitNodes.set(unit.id,group);unitLayer.append(group);
+  }
+  // Hit-test in SVG coordinates even when an arrow currently covers a panel.
+  canvas.addEventListener('pointermove', event => {
+    const matrix = canvas.getScreenCTM(); if (!matrix) return;
+    const point = canvas.createSVGPoint(); point.x = event.clientX; point.y = event.clientY;
+    const local = point.matrixTransform(matrix.inverse());
+    const match = [...positions.values()].find(p => local.x >= p.x && local.x <= p.x+p.width && local.y >= p.y && local.y <= p.y+64);
+    liftUnit(match ? unitNodes.get(match.unit.id) : null);
+  });
+  canvas.addEventListener('pointerleave', () => liftUnit(null));
+  dom.battleStrip.append(el('div', { class: 'target-map-header' }, el('strong', null, '战场'), el('span', { class: 'map-legend' }, el('span', { class: 'red' }, '↗ 敌方攻击'), el('span', { class: 'blue' }, '↗ 我方已行动'), el('span', { class: 'yellow' }, '↗ 防御响应'), areas.length ? el('span',null,'范围：悬停展开 · 点击固定') : null)), canvas);
+}
+
 function renderBattleStrip() {
   if (!dom.battleStrip) return;
   clearNode(dom.battleStrip);
@@ -1126,11 +1454,8 @@ function renderBattleStrip() {
   const active = battle.participants.filter((p) => p && toInt(p.active_in_stage, 0) === 1);
   const friendly = active.filter((p) => p.faction === 'FRIENDLY');
   const enemy = active.filter((p) => p.faction === 'ENEMY');
-  // 敌人在左、我方在右：与"我方播报气泡靠右"的方向语言一致。
-  dom.battleStrip.append(
-    el('div', { class: 'strip-side enemy' }, enemy.map(stripUnit)),
-    el('div', { class: 'strip-vs' }, 'VS'),
-    el('div', { class: 'strip-side friendly' }, friendly.map(stripUnit)));
+  renderTargetMap(battle, enemy, friendly);
+
 }
 
 /* ================= 底部操作条 ================= */
@@ -1173,7 +1498,14 @@ function renderActionBar() {
   const phase = String(battle.phase || '');
   dom.actionBar.append(phasePill(phase));
 
-  if (phase === 'FRIENDLY_ACTION') {
+  if (phase === 'ENEMY_PLANNING') {
+    if (isGm) {
+      dom.actionBar.append(el('button', { class: 'btn primary', type: 'button', onclick: () => openActionWizard('e') }, '准备敌方行动'));
+      dom.actionBar.append(writeButton('开始应对', 'ghost', async () => {
+        await api('/api/battle/lock-intents', { method: 'POST', body: {} });
+      }));
+    } else dom.actionBar.append(el('span', { class: 'action-hint' }, '敌方正在准备行动…'));
+  } else if (phase === 'FRIENDLY_ACTION') {
     // 回合顺序显性化：助战（GM 扮演）行动完，玩家核心才行动。
     const assistsPending = (battle.participants || []).some((p) =>
       p.faction === 'FRIENDLY' && !toInt(p.is_core, 0)
@@ -1192,15 +1524,14 @@ function renderActionBar() {
         await api('/api/battle/forfeit-assists', { method: 'POST', body: {} });
       }));
     }
-    dom.actionBar.append(writeButton('结束回合', 'ghost', async () => {
+    dom.actionBar.append(el('button', { class: 'btn', type: 'button', onclick: openDefenseWizard }, '防御指令'));
+    dom.actionBar.append(writeButton('结束我方指令', 'ghost', async () => {
       await api('/api/battle/pass', { method: 'POST', body: {} });
     }));
   } else if (phase === 'ENEMY_ACTION') {
     if (isGm) {
-      dom.actionBar.append(el('button', {
-        class: 'btn primary', type: 'button', onclick: () => openActionWizard('e'),
-      }, '敌方行动'));
-      dom.actionBar.append(writeButton('回合结算', 'ghost', async () => {
+
+      dom.actionBar.append(writeButton('执行敌方指令并结算', 'ghost', async () => {
         await api('/api/battle/settle', { method: 'POST', body: {} });
         toast('回合已清算。', 'ok');
       }));
@@ -1289,6 +1620,92 @@ function pickItem(titleParts, subText, onPick) {
   if (subText) button.append(el('span', { class: 'pick-sub' }, subText));
   button.addEventListener('click', onPick);
   return button;
+}
+
+function enemyIntentLabel(intent) {
+  const targets = intent.effective_target_names || intent.target_names || [];
+  const redirect = intent.redirect;
+  return intent.actor_name + ' · ' + intent.skill_name + ' → ' + targets.join('、')
+    + (redirect ? '（被' + redirect.actor_name + redirect.label + '）' : '');
+}
+
+function openEnemyIntentDetails(intent) {
+  const modal = openModal({title:intent.actor_name + ' · ' + intent.skill_name, wide:true});
+  if (!modal) return;
+  const body = el('div', {class:'enemy-skill-details'},
+    el('p', {class:'effect-description'}, intent.skill_description || '该技能暂无额外说明。'),
+    el('p', null, '目标：' + (intent.effective_target_names || intent.target_names || []).join('、')));
+  if (intent.redirect) body.append(el('p', null, '被' + intent.redirect.actor_name + intent.redirect.label));
+  if (intent.disabled) body.append(el('p', {class:'forecast tier-1'}, '释放者已混乱或倒下，这次行动将取消。'));
+  else if (intent.status !== 'PENDING') body.append(el('p', {class:'forecast-note'}, '这次行动已处理。'));
+  const timing = {PRE:'使用前', ON:'使用时', POST:'使用后', TURN_START:'回合开始', TURN_END:'回合结束'};
+  const conditions = {
+    ALWAYS:'直接生效', ON_HIT:'命中时', ON_CRIT_HIT:'暴击命中时', ON_CRIT_TRIGGER:'触发暴击时',
+    ON_KILL:'击杀时', ON_CRIT_KILL:'暴击击杀时', ON_KILL_SELECTED_TARGET:'击杀选定目标时',
+    ON_NO_KILL_SELECTED_TARGET:'未击杀选定目标时', ON_KILL_ALLY:'击杀同阵营角色时', ON_KILL_ENEMY:'击杀对立阵营角色时'
+  };
+  const scopes = {PER_SKILL:'每次技能', PER_TARGET:'每个符合条件的目标', PER_HIT:'每次符合条件的命中'};
+  for (const effect of intent.skill_effects || []) {
+    const params = effect.params || {};
+    let summary;
+    if (effect.effect_type === 'DAMAGE') summary = '造成 ' + (effect.value || '0') + ' 点伤害';
+    else if (effect.effect_type === 'HEAL') summary = '恢复 ' + (effect.value || '0') + ' 点生命';
+    else if (effect.effect_type === 'APPLY_EFFECT') {
+      summary = '施加「' + (effect.effect_name || '状态效果') + '」';
+      if (params.intensity) summary += ' · ' + params.intensity + '级';
+      if (params.stacks) summary += ' · ' + params.stacks + '层';
+      if (params.remaining_turns !== undefined && params.remaining_turns !== null) summary += ' · 持续' + params.remaining_turns + '回合';
+      if (params.activation_timing === 'NEXT_TURN_START') summary += ' · 下回合开始生效';
+    } else summary = params.description || '特殊效果，详见上方技能说明。';
+    body.append(el('div', {class:'skill-item'},
+      el('div', {class:'chips'}, chip(timing[effect.timing] || '条件触发'), chip(conditions[effect.trigger_condition] || '条件生效'),
+        effect.trigger_condition !== 'ALWAYS' ? chip(scopes[effect.trigger_scope] || '满足条件时') : null),
+      el('p', {class:'skill-name'}, summary),
+      el('div', {class:'skill-desc'}, '作用目标：' + ((effect.target_names || []).join('、') || '无有效目标')),
+      effect.description ? el('div', {class:'effect-description'}, effect.description) : null));
+  }
+  body.append(el('p', {class:'forecast-note'}, '伤害显示技能原始点数或公式；实际结果还受状态、混乱和防御等影响。条件效果仅在满足条件时生效。'));
+  modal.setBody(body);
+  modal.setFooter(el('button', {class:'btn ghost', type:'button', onclick:closeModal}, '关闭'));
+}
+
+async function openDefenseWizard() {
+  const modal = openModal({ title: '发布防御指令', wide: true });
+  if (!modal) return;
+  let battle;
+  try { battle = await api('/api/battle'); }
+  catch (err) { closeModal(); toast(err.message, 'error'); return; }
+  const submit = async (actor, intent) => {
+    try {
+      await api('/api/battle/defend', { method: 'POST', body: { actor_id: actor.id, intent_id: intent ? intent.id : null } });
+      closeModal();
+    } catch (err) { toast(err.message, 'error'); }
+  };
+  const list = el('div');
+  const actors = await api('/api/battle/actors?side=f');
+  for (const actor of actors) {
+    const unit = battle.participants.find((p) => p.id === actor.id);
+    const spec = unit && unit.defense_skill;
+    if (!spec || (battle.defenses || []).some((d) => d.actor_id === actor.id)) continue;
+    list.append(pickItem(actor.name + ' · ' + spec.name + ' ' + spec.power, '消耗一次行动，敌方攻击时结算', () => {
+      if (spec.kind === 'COUNTER') { submit(actor); return; }
+      const redirecting = ['INTERCEPT','MEET'].includes(spec.kind);
+      const targets = el('div');
+      for (const intent of battle.enemy_intents || []) {
+        if (intent.status !== 'PENDING' || intent.disabled) continue;
+        if (redirecting && intent.target_ids.length !== 1) continue;
+        if (!redirecting && !(intent.attack_target_ids || []).includes(actor.id)) continue;
+        const forecast = (intent.response_forecasts || {})[actor.id];
+        const prediction = forecast ? el('span', {class:'forecast tier-' + forecast.tier}, forecast.label + ' · ' + (forecast.approximate ? '约 ' : '') + Math.round(forecast.probability * 100) + '%') : null;
+        targets.append(pickItem([enemyIntentLabel(intent), prediction].filter(Boolean), forecast ? '首段点数：' + forecast.defense_power + ' 对 ' + forecast.attack_power : null, () => submit(actor, redirecting ? intent : null)));
+      }
+      targets.append(el('p',{class:'forecast-note'},'预测为首段点数不低于攻击的概率，不含条件加值；迎击仍在承伤后反击，多段攻击逐次判定。'));
+      if (!redirecting) targets.append(el('button',{class:'btn',onclick:()=>submit(actor)},'准备' + spec.name));
+      modal.setBody(targets);
+    }));
+  }
+  modal.setBody(list);
+  modal.setFooter(el('button', { class: 'btn ghost', onclick: closeModal }, '关闭'));
 }
 
 function openActionWizard(side) {
@@ -1606,89 +2023,6 @@ function openNextStageWizard() {
   })();
 }
 
-/* ================= 向导：触发确认 ================= */
-
-function openLaunchWizard() {
-  const modal = openModal({ title: '触发确认', wide: true });
-  if (!modal) return;
-
-  const load = async () => {
-    modal.setBody(el('div', { class: 'modal-loading' }, '正在核对编成…'));
-    modal.setFooter(el('button', { class: 'btn ghost', type: 'button', onclick: closeModal }, '取消'));
-    let ready;
-    try {
-      ready = await api('/api/setup/ready');
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 401) { closeModal(); return; }
-      modal.setBody(el('div', { class: 'page-error' },
-        el('div', null, (err && err.message) || '读取失败'),
-        el('button', { class: 'btn ghost', type: 'button', onclick: load }, '重试')));
-      return;
-    }
-    /* 服务端返回 {setup, revision} 信封：摘要字段在 setup 内，铺平后再读。 */
-    if (ready && ready.setup) ready = Object.assign({ revision: ready.revision }, ready.setup);
-    const friendlies = Array.isArray(ready.friendlies) ? ready.friendlies : [];
-    const enemies = Array.isArray(ready.enemies) ? ready.enemies : [];
-    const stageOne = enemies.filter((e) => toInt(e.stage_number, 0) === 1);
-    const gear = parseJsonArray(ready.abnormalities_json);
-    const friendlyText = friendlies.length
-      ? friendlies.map((f) => (f.name || '') + (f.persona_name ? '（' + f.persona_name + '）' : '')).join('、')
-      : '尚未编入友方';
-    const enemyText = stageOne.length
-      ? stageOne.map((e) => {
-          const label = e.display_name || e.template_name || e.template_key || '敌人';
-          const amount = toInt(e.amount, 1);
-          return amount > 1 ? label + ' ×' + amount : label;
-        }).join('、')
-      : '尚未编入敌人';
-    const summary = el('div', { class: 'summary-box' },
-      el('div', { class: 'summary-row' },
-        el('span', { class: 'summary-key' }, '战斗名称'),
-        el('span', { class: 'summary-val' }, ready.name || '')),
-      el('div', { class: 'summary-row' },
-        el('span', { class: 'summary-key' }, '关卡'),
-        el('span', { class: 'summary-val' },
-          (ready.encounter_name || '') + '｜共 ' + toInt(ready.total_stages, 0) + ' 阶段')),
-      el('div', { class: 'summary-row' },
-        el('span', { class: 'summary-key' }, '友方'),
-        el('span', { class: 'summary-val' }, friendlyText)),
-      el('div', { class: 'summary-row' },
-        el('span', { class: 'summary-key' }, '首阶段敌方'),
-        el('span', { class: 'summary-val' }, enemyText)),
-      el('div', { class: 'summary-row' },
-        el('span', { class: 'summary-key' }, '异想体'),
-        el('span', { class: 'summary-val' }, gear.length ? gear.join('、') : '未装备')),
-      el('div', { class: 'summary-row' },
-        el('span', { class: 'summary-key' }, '修订号'),
-        el('span', { class: 'summary-val' }, '#' + toInt(ready.revision, 0))));
-    const confirmBtn = el('button', { class: 'btn primary', type: 'button' }, '确认触发战斗');
-    confirmBtn.addEventListener('click', () => withBusy(confirmBtn, async () => {
-      try {
-        await api('/api/setup/launch', { method: 'POST', body: { revision: toInt(ready.revision, 0) } });
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 409) {
-          toast((err.message || '编成已变化') + '（已重新读取最新编成）', 'error');
-          load();
-          return;
-        }
-        throw err;
-      }
-      closeModal();
-      toast('战斗已触发。', 'ok');
-      showView('battle');
-    }));
-    modal.setNote('触发前最后核对');
-    modal.setBody(el('div', null,
-      el('div', { class: 'wizard-subtitle' },
-        '确认编成无误后触发战斗；若期间编成发生变化，本确认会失效并要求重新核对。'),
-      summary));
-    modal.setFooter(
-      el('button', { class: 'btn ghost', type: 'button', onclick: closeModal }, '取消'),
-      confirmBtn);
-  };
-  load();
-}
-
 /* ================= 页面视图：战斗列表（GM） ================= */
 
 function pageShell(title, desc, ...children) {
@@ -1867,8 +2201,7 @@ async function renderSetupView() {
         toast('已发布：玩家将收到确认横幅，确认后战斗开始。', 'info');
         await refreshOverview();
         renderCurrentView();
-      }),
-      el('button', { class: 'btn ghost', type: 'button', onclick: () => openLaunchWizard() }, '直接触发')));
+      })));
   }
   shell.append(headCard);
 

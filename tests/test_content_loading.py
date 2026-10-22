@@ -14,6 +14,7 @@ from conftest import BASE_PACK, make_extension_pack
 
 EXAMPLE_PACK = BASE_PACK.parents[1] / "content" / "example_extension.json"
 CORE_PERSONAS = BASE_PACK.parents[1] / "content" / "core_personas.json"
+SHOWCASE_PACK = BASE_PACK.parents[1] / "content" / "test_showcase.json"
 
 
 def _count(database: Database, table: str) -> int:
@@ -84,6 +85,37 @@ def test_extension_pack_adds_content_and_reuses_base_definitions(database: Datab
     )
     assert new_skill is not None
     assert int(new_skill["enabled"]) == 1
+
+
+def test_showcase_pack_defines_zero_action_persona_dummy(
+    database: Database,
+) -> None:
+    loader = ContentLoader(database)
+    loader.load_path(BASE_PACK)
+    result = loader.load_path(SHOWCASE_PACK)
+
+    assert result.version == "1.4.0"
+    dummy = database.fetch_one(
+        """
+        SELECT max_hp,max_actions,max_stagger
+        FROM character_templates
+        WHERE template_key='enemy.showcase.persona_dummy'
+        """
+    )
+    assert dummy is not None
+    assert (
+        int(dummy["max_hp"]),
+        int(dummy["max_actions"]),
+        int(dummy["max_stagger"]),
+    ) == (9999, 0, 9999)
+    encounter = database.fetch_one(
+        """
+        SELECT name FROM encounters
+        WHERE encounter_key='encounter.showcase.persona_dummy'
+        """
+    )
+    assert encounter is not None
+    assert encounter["name"] == "人格打桩测试"
 
 
 def test_declared_pack_dependency_enforces_load_order(database: Database) -> None:

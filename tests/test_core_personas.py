@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from conftest import lock_enemy_planning
+
 import json
 import sqlite3
 
@@ -73,6 +75,7 @@ def test_once_per_battle_skill_is_actually_exhausted(database: object) -> None:
     engine.switch_persona(ying, "persona.ying.wandering_band_leader")
     enemy = engine.spawn_character("enemy.training_shell", Faction.ENEMY)
     engine.start_battle([ying], [enemy])
+    lock_enemy_planning(engine)
     with database.transaction() as connection:
         connection.execute("UPDATE characters SET current_actions=3 WHERE id=?", (ying,))
     pinata = next(
@@ -93,6 +96,7 @@ def test_again_again_requires_mark_from_the_same_actor(database: object) -> None
     engine.switch_persona(jue, "persona.jue.stray_hound_boss")
     enemy = engine.spawn_character("enemy.training_shell", Faction.ENEMY)
     engine.start_battle([jue], [enemy])
+    lock_enemy_planning(engine)
     with database.transaction() as connection:
         connection.execute("UPDATE characters SET current_actions=3 WHERE id=?", (jue,))
     skills = {item["skill_key"]: item for item in engine.list_skills(jue)}
@@ -112,6 +116,7 @@ def test_legacy_sanity_effects_now_shift_emotion(database: object) -> None:
     engine.switch_persona(ying, "persona.ying.wandering_band_leader")
     enemy = engine.spawn_character("enemy.training_shell", Faction.ENEMY)
     engine.start_battle([ying], [enemy])
+    lock_enemy_planning(engine)
     skill = next(
         item
         for item in engine.list_skills(ying)
@@ -240,6 +245,7 @@ def test_assists_act_before_player_cores(database: object) -> None:
     assist = engine.spawn_character("enemy.training_shell", Faction.FRIENDLY)
     enemy = engine.spawn_character("enemy.training_shell", Faction.ENEMY)
     engine.start_battle([ying, assist], [enemy])
+    lock_enemy_planning(engine)
 
     skill = next(
         item for item in engine.list_skills(ying)
@@ -268,6 +274,7 @@ def test_page_levels_gate_by_team_emotion_and_carry_activates(database: object) 
     ying = int(engine.get_core_character("莹")["id"])
     enemy = engine.spawn_character("enemy.training_shell", Faction.ENEMY)
     engine.start_battle([ying], [enemy])
+    lock_enemy_planning(engine)
     battle_id = int(database.fetch_one("SELECT id FROM battles WHERE status='ACTIVE'")["id"])
 
     with database.transaction() as connection:
@@ -310,3 +317,34 @@ def test_page_levels_gate_by_team_emotion_and_carry_activates(database: object) 
     ]
     # 情感 3 级 = 解锁至Ⅱ级：候选只会是 Ⅰ/Ⅱ 级页，Ⅲ 级页不出现。
     assert levels and all(level <= 2 for level in levels)
+
+
+def test_page_offer_distinguishes_empty_and_exhausted_pool(database: object) -> None:
+    engine = _load_core(database)
+    ContentLoader(database, engine.registry.keys).load_path(
+        BASE_PACK.with_name("test_showcase.json")
+    )
+    ying = int(engine.get_core_character("莹")["id"])
+    enemy = engine.spawn_character("enemy.training_shell", Faction.ENEMY)
+    engine.start_battle([ying], [enemy])
+    lock_enemy_planning(engine)
+    battle_id = int(database.fetch_one("SELECT id FROM battles WHERE status='ACTIVE'")["id"])
+
+    with database.transaction() as connection:
+        empty_messages = engine._create_page_offer(
+            connection, battle_id, ying, 5, positive=1, negative=0
+        )
+    assert empty_messages == ["◇ 携带的异想体没有可选书页，本次选择跳过。"]
+
+    with database.transaction() as connection:
+        engine._prepare_abnormality_pool(
+            connection, battle_id, ["showcase.abnormality.lantern_case"]
+        )
+        connection.execute(
+            "UPDATE battle_page_pool SET status='USED' WHERE battle_id=?",
+            (battle_id,),
+        )
+        exhausted_messages = engine._create_page_offer(
+            connection, battle_id, ying, 5, positive=1, negative=0
+        )
+    assert exhausted_messages == ["◇ 携带的异想体书页已用尽，本次选择跳过。"]

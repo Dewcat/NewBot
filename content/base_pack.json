@@ -6,19 +6,19 @@
     "description": "提供规则状态、通用训练技能和普通单位生成兼容定义；五名核心角色本体由核心角色包登记。"
   },
   "effects": [
-    {"key": "status.strength", "name": "强壮", "category": "GENERIC", "icon": "💪"},
-    {"key": "status.weakness", "name": "虚弱", "category": "GENERIC", "icon": "◈"},
-    {"key": "status.guard", "name": "守护", "category": "GENERIC", "icon": "☂"},
-    {"key": "status.shield", "name": "护盾", "category": "GENERIC", "icon": "▣"},
-    {"key": "status.vulnerable", "name": "易伤", "category": "GENERIC", "icon": "◇"},
-    {"key": "status.paralysis", "name": "麻痹", "category": "GENERIC", "icon": "⌁"},
-    {"key": "status.burn", "name": "烧伤", "category": "REGULAR", "icon": "🔥"},
-    {"key": "status.poison", "name": "中毒", "category": "REGULAR", "icon": "☠"},
-    {"key": "status.bleeding", "name": "流血", "category": "REGULAR", "icon": "🩸"},
-    {"key": "status.rupture", "name": "破裂", "category": "REGULAR", "icon": "✦"},
-    {"key": "status.breathing", "name": "呼吸法", "category": "REGULAR", "icon": "◉"},
-    {"key": "status.hardblood", "name": "硬血", "category": "SPECIAL", "icon": "◆", "handler": "accumulate_resource", "default_params": {"persist": true, "lifecycle_scope": "BATTLE", "amount": 0, "resource_key": "status.hardblood", "events": []}},
-    {"key": "instant.bonus_actions", "name": "额外行动点", "category": "INSTANT", "handler": "bonus_actions"}
+    {"key": "status.strength", "name": "强壮", "category": "GENERIC", "icon": "💪", "description": "每级使技能伤害倍率增加10个百分点，与虚弱、目标的守护及易伤合并计算。回合结束时清除。"},
+    {"key": "status.weakness", "name": "虚弱", "category": "GENERIC", "icon": "◈", "description": "每级使技能伤害倍率降低10个百分点，与强壮、目标的守护及易伤合并计算，倍率最低为0。回合结束时清除。"},
+    {"key": "status.guard", "name": "守护", "category": "GENERIC", "icon": "☂", "description": "每级使受到的技能伤害倍率降低10个百分点，与易伤及攻击者的强壮、虚弱合并计算，倍率最低为0。回合结束时清除。"},
+    {"key": "status.shield", "name": "护盾", "category": "GENERIC", "icon": "▣", "description": "每点护盾抵消1点技能伤害，抵消多少就消耗多少，耗尽后移除。未用完的护盾在回合结束时清除。"},
+    {"key": "status.vulnerable", "name": "易伤", "category": "GENERIC", "icon": "◇", "description": "每级使受到的技能伤害倍率增加10个百分点，与守护及攻击者的强壮、虚弱合并计算。回合结束时清除。"},
+    {"key": "status.paralysis", "name": "麻痹", "category": "GENERIC", "icon": "⌁", "description": "造成技能伤害时，每级使一颗伤害骰子的结果变为0，并消耗对应等级；公式中的固定加值不受影响。回合结束时清除剩余麻痹。"},
+    {"key": "status.burn", "name": "烧伤", "category": "REGULAR", "icon": "🔥", "description": "回合结束时，受到等于烧伤等级的固定伤害，然后消耗1层。层数耗尽后移除。"},
+    {"key": "status.poison", "name": "中毒", "category": "REGULAR", "icon": "☠", "description": "回合结束时，受到当前生命值×中毒等级%的固定伤害，向下取整且至少为1点，然后消耗1层。层数耗尽后移除。"},
+    {"key": "status.bleeding", "name": "流血", "category": "REGULAR", "icon": "🩸", "description": "使用技能完成行动后，受到等于流血等级的固定伤害，然后消耗1层。层数耗尽后移除。"},
+    {"key": "status.rupture", "name": "破裂", "category": "REGULAR", "icon": "✦", "description": "受到技能命中后，若仍存活，额外受到等于破裂等级的固定伤害；每次触发消耗1层，层数耗尽后移除。"},
+    {"key": "status.breathing", "name": "呼吸法", "category": "REGULAR", "icon": "◉", "description": "每级提供1%的技能伤害暴击概率；暴击时该段伤害倍率额外乘以1.2。回合结束时消耗1层，层数耗尽后移除。"},
+    {"key": "status.hardblood", "name": "硬血", "category": "SPECIAL", "icon": "◆", "description": "战斗内保留的资源，可由相关技能积累或消耗；用途与消耗量以技能说明为准。", "handler": "accumulate_resource", "default_params": {"persist": true, "lifecycle_scope": "BATTLE", "amount": 0, "resource_key": "status.hardblood", "events": []}},
+    {"key": "instant.bonus_actions", "name": "额外行动点", "category": "INSTANT", "description": "立即增加本回合的剩余行动次数，增加数量由施加该效果的技能或能力决定。", "handler": "bonus_actions"}
   ],
   "skills": [
     {

@@ -891,6 +891,59 @@ SCHEMA_V21 = r"""
 ALTER TABLE battle_setup_enemies ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
 """
 
+SCHEMA_V22 = r"""
+CREATE TABLE character_templates_v22 (
+    template_key TEXT PRIMARY KEY,
+    pack_key TEXT NOT NULL REFERENCES content_packs(pack_key),
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    max_hp INTEGER NOT NULL CHECK(max_hp > 0),
+    max_actions INTEGER NOT NULL DEFAULT 1 CHECK(max_actions >= 0),
+    max_stagger INTEGER NOT NULL CHECK(max_stagger > 0),
+    tags_json TEXT NOT NULL DEFAULT '[]',
+    ego_skill_id INTEGER REFERENCES skills(id),
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO character_templates_v22(
+    template_key,pack_key,name,description,max_hp,max_actions,max_stagger,
+    tags_json,ego_skill_id,metadata_json,enabled,updated_at
+)
+SELECT template_key,pack_key,name,description,max_hp,max_actions,max_stagger,
+       tags_json,ego_skill_id,metadata_json,enabled,updated_at
+FROM character_templates;
+
+DROP TABLE character_templates;
+ALTER TABLE character_templates_v22 RENAME TO character_templates;
+"""
+
+
+SCHEMA_V23 = r"""
+CREATE TABLE battle_intents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    battle_id INTEGER NOT NULL REFERENCES battles(id) ON DELETE CASCADE,
+    turn_number INTEGER NOT NULL,
+    actor_id INTEGER NOT NULL,
+    skill_id INTEGER NOT NULL,
+    target_ids_json TEXT NOT NULL,
+    behavior_targets_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'PENDING'
+);
+CREATE TABLE battle_defenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    battle_id INTEGER NOT NULL REFERENCES battles(id) ON DELETE CASCADE,
+    turn_number INTEGER NOT NULL,
+    actor_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    power TEXT NOT NULL,
+    intent_id INTEGER,
+    active INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(battle_id,turn_number,actor_id)
+);
+"""
+
 
 MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     (1, "v2_initial_schema", SCHEMA_V1),
@@ -914,4 +967,6 @@ MIGRATIONS: tuple[tuple[int, str, str], ...] = (
     (19, "abnormality_player_access", SCHEMA_V19),
     (20, "persona_player_access", SCHEMA_V20),
     (21, "setup_enemy_toggle", SCHEMA_V21),
+    (22, "zero_action_character_templates", SCHEMA_V22),
+    (23, "enemy_intents_and_defenses", SCHEMA_V23),
 )

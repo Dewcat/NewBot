@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import logging
 import secrets
 import time
@@ -195,7 +196,12 @@ def _strip_admin_hints(message: str) -> str:
         line for line in str(message).split("\n")
         if "〔管理〕" not in line
     ]
-    return "\n".join(lines).strip()
+    rendered = "\n".join(lines).strip()
+    rendered = rendered.replace("敌方指令阶段：管理员设置技能与目标后锁定，玩家再行动。", "敌方正在准备行动。")
+    rendered = rendered.replace("敌方指令已锁定，玩家可查看技能与目标并发布攻击或防御指令。", "敌方行动已确定，选择你的应对。")
+    rendered = re.sub(r"指令 #\d+[：:]\s*", "", rendered)
+    rendered = re.sub(r"指令 #\d+", "攻击", rendered)
+    return rendered
 
 
 def _recent_battle_logs(engine: BattleEngine, limit: int) -> list[str]:
@@ -384,12 +390,12 @@ def create_app(
             except asyncio.QueueFull:
                 pass
 
-    def _notify(lines: list[str]) -> None:
+    def _notify(lines: list[str], *, paced: bool = True) -> None:
         """向所有 SSE 连接广播一批播报行，随后跟一条 refresh 提示。"""
         cleaned = [str(line) for line in lines if str(line).strip()]
         events: list[str] = []
         if cleaned:
-            events.append(_sse_event("log", {"lines": cleaned}))
+            events.append(_sse_event("log", {"lines": cleaned, "interval_ms": 1500 if paced else 0}))
         events.append(_sse_event("refresh", {}))
         for queue in list(sse_clients):
             for item in events:
@@ -694,18 +700,44 @@ def create_app(
             "SELECT id,current_turn FROM battles WHERE status='ACTIVE'"
         )
         logs = engine.database.fetch_all(
-            "SELECT id,battle_id,turn_number,message,created_at"
+            "SELECT id,battle_id,turn_number,message,payload_json,created_at"
             " FROM battle_logs ORDER BY id DESC LIMIT ?",
             (int(limit),),
         )
+        battle_ids = sorted({int(row["battle_id"]) for row in logs})
+        factions_by_battle: dict[int, list[dict[str, str]]] = {
+            battle_id: [] for battle_id in battle_ids
+        }
+        if battle_ids:
+            placeholders = ",".join("?" for _ in battle_ids)
+            participant_rows = engine.database.fetch_all(
+                f"""
+                SELECT bp.battle_id,c.name,c.faction
+                FROM battle_participants bp
+                JOIN characters c ON c.id=bp.character_id
+                WHERE bp.battle_id IN ({placeholders})
+                ORDER BY bp.battle_id,bp.character_id
+                """,
+                tuple(battle_ids),
+            )
+            for participant in participant_rows:
+                factions_by_battle[int(participant["battle_id"])].append({
+                    "name": str(participant["name"]),
+                    "faction": str(participant["faction"]),
+                })
         items: list[dict[str, Any]] = []
         for row in reversed(logs):
             message = _strip_admin_hints(row["message"])
             if message:
+                payload = json.loads(str(row["payload_json"] or "{}"))
+                factions = payload.get("participant_factions")
+                if not isinstance(factions, list):
+                    factions = factions_by_battle.get(int(row["battle_id"]), [])
                 items.append({
                     "type": "log",
                     "message": message,
                     "created_at": str(row["created_at"]),
+                    "factions": factions,
                     "current": bool(
                         active is not None
                         and int(row["battle_id"]) == int(active["id"])
@@ -1206,12 +1238,32 @@ def create_app(
             )
             return battle_id, [
                 *launch_messages,
-                f"战斗 #{battle_id} 开始！行动权在我方。",
+                f"战斗 #{battle_id} 开始！等待敌方设置指令。",
             ]
 
         battle_id, messages = await _locked(_do)
         _notify(messages)
         return {"messages": messages, "battle_id": battle_id}
+
+    @app.post("/api/battle/lock-intents")
+    async def lock_intents(request: Request) -> dict[str, Any]:
+        _require_gm(request)
+        message = await _locked(engine.finish_enemy_planning)
+        _notify([message])
+        return {"messages": [message]}
+
+    @app.post("/api/battle/defend")
+    async def battle_defend(request: Request) -> dict[str, Any]:
+        role = _require_role(request)
+        body = await _payload(request)
+        actor_id = _as_int(body.get("actor_id"), "actor_id")
+        actor = await _read(engine.get_character, actor_id)
+        if role != ROLE_GM and (actor["faction"] != "FRIENDLY" or not int(actor["is_core"])):
+            raise ApiError(403, "玩家只能操作核心角色。")
+        intent_id = _as_int(body["intent_id"], "intent_id") if body.get("intent_id") is not None else None
+        messages = list(await _locked(engine.declare_defense, actor_id, intent_id))
+        _notify(messages)
+        return {"messages": messages}
 
     @app.post("/api/battle/pass")
     async def battle_pass(request: Request) -> dict[str, Any]:
@@ -1226,7 +1278,7 @@ def create_app(
     async def battle_settle(request: Request) -> dict[str, Any]:
         _require_gm(request)
         messages = list(await _locked(engine.end_turn))
-        _notify(messages)
+        _notify(messages, paced=True)
         return {"messages": messages}
 
     @app.post("/api/battle/next")
@@ -1420,6 +1472,12 @@ def main() -> None:
     database = Database(settings.database_path)
     database.initialize()
     engine = BattleEngine(database)
+    removed_enemies = engine.cleanup_completed_battles()
+    if removed_enemies:
+        LOGGER.info(
+            "Cleaned up %s generated enemies from completed battles",
+            removed_enemies,
+        )
     loader = ContentLoader(database, engine.registry.keys)
 
     from ..telegram_app import _expand_content_paths

@@ -8,7 +8,7 @@ from dataclasses import asdict, replace as dataclass_replace
 from typing import Any, Iterable
 
 from .db import Database
-from .dice import roll_formula
+from .dice import roll_formula, point_advantage
 from .effects import EffectExecutionContext, SpecialEffectRegistry
 from .models import (
     ActionResult,
@@ -517,7 +517,7 @@ class BattleEngine:
         """GM 圈定本场"可参战核心"（2026-07-26 裁定：出战与人格由玩家决定）。
 
         同步维护编成：池外核心移出编成；池内核心若尚未编入，则以当前
-        激活人格补进，保证 GM「直接触发」路径依旧可用。
+        激活人格补进，保证发布给玩家时已有合法的默认编成。
         """
         ids = list(dict.fromkeys(int(item) for item in character_ids))
         with self.database.transaction() as connection:
@@ -1078,7 +1078,7 @@ class BattleEngine:
                 raise BattleRuleError("当前阶段已经结束，敌方增援只能加入下一阶段。")
             if battle is not None and target_stage == int(battle["current_stage"]):
                 if phase not in {
-                    BattlePhase.FRIENDLY_ACTION, BattlePhase.ENEMY_ACTION
+                    BattlePhase.ENEMY_PLANNING, BattlePhase.FRIENDLY_ACTION, BattlePhase.ENEMY_ACTION
                 }:
                     raise BattleRuleError("当前正在结算阶段，暂时不能让敌方增援入场。")
                 setup_enemy = connection.execute(
@@ -1466,7 +1466,7 @@ class BattleEngine:
                     positive_emotion_coins=0,negative_emotion_coins=0,
                     pending_emotion_upgrade=0,
                     max_actions=max_actions-emotion_bonus_actions,
-                    current_actions=MAX(1,max_actions-emotion_bonus_actions),
+                    current_actions=MAX(0,max_actions-emotion_bonus_actions),
                     emotion_bonus_actions=0
                 WHERE id=?
                 """,
@@ -1559,6 +1559,232 @@ class BattleEngine:
         )
         return tuple(messages)
 
+    def finish_enemy_planning(self) -> str:
+        with self.database.transaction() as connection:
+            battle = self._active_battle(connection)
+            if battle["phase"] == "FRIENDLY_ACTION":
+                # A manual lock arriving just after automatic locking is harmless.
+                return "敌方行动已确定，选择你的应对。"
+            if battle["phase"] != "ENEMY_PLANNING":
+                raise BattleRuleError("当前并非敌方指令阶段。")
+            return self._lock_enemy_planning(connection, int(battle["id"]))
+
+    def _lock_enemy_planning(self, connection, battle_id: int) -> str:
+        connection.execute("UPDATE battles SET phase='FRIENDLY_ACTION' WHERE id=?", (battle_id,))
+        message = "敌方行动已确定，选择你的应对。"
+        self._log(connection, battle_id, "PHASE_CHANGE", message=message)
+        return message
+
+    def _intent_redirect(self, connection, intent_id):
+        # The latest order owns the redirect; never fall back to an older order.
+        order = connection.execute(
+            "SELECT * FROM battle_defenses WHERE intent_id=? AND kind IN ('INTERCEPT','MEET') ORDER BY id DESC LIMIT 1",
+            (intent_id,),
+        ).fetchone()
+        if order is None or not order["active"]:
+            return None
+        actor = self._character(connection, order["actor_id"])
+        if actor["current_hp"] <= 0 or actor["is_staggered"] or not self._is_active_participant(connection, actor["id"]):
+            return None
+        return order
+
+    def _intent_rows(self, connection, battle) -> list[dict[str, Any]]:
+        rows = connection.execute(
+            "SELECT i.*,c.name AS actor_name,s.name AS skill_name,s.description AS skill_description "
+            "FROM battle_intents i JOIN characters c ON c.id=i.actor_id "
+            "JOIN skills s ON s.id=i.skill_id WHERE i.battle_id=? AND i.turn_number=? ORDER BY i.id",
+            (battle["id"], battle["current_turn"]),
+        ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["target_ids"] = _loads(row["target_ids_json"], [])
+            item["behavior_targets"] = _loads(row["behavior_targets_json"], {})
+            item["additional_target_names"] = list(dict.fromkeys(self._character(connection, tid)["name"] for ids in item["behavior_targets"].values() for tid in ids if tid not in item["target_ids"]))
+            item["target_names"] = [self._character(connection, tid)["name"] for tid in item["target_ids"]]
+            redirect = self._intent_redirect(connection, row["id"])
+            item["redirect"] = None
+            item["effective_target_ids"] = list(item["target_ids"])
+            item["effective_target_names"] = list(item["target_names"])
+            if redirect:
+                defender = self._character(connection, redirect["actor_id"])
+                item["redirect"] = {"actor_id": defender["id"], "actor_name": defender["name"], "kind": redirect["kind"], "label": "拦截" if redirect["kind"] == "INTERCEPT" else "迎击"}
+                item["effective_target_ids"] = [defender["id"]]
+                item["effective_target_names"] = [defender["name"]]
+            attack_targets = []
+            for behavior in connection.execute("SELECT id,target_source FROM skill_behaviors WHERE skill_id=? AND enabled=1 AND effect_type='DAMAGE'", (row["skill_id"],)):
+                attack_targets.extend(item["effective_target_ids"] if behavior["target_source"] == "INHERIT_SKILL" else item["behavior_targets"].get(str(behavior["id"]), []))
+            item["attack_target_ids"] = list(dict.fromkeys(attack_targets))
+            item["area_target_ids"] = self._area_attack_targets(connection, row["skill_id"], row["actor_id"], item["effective_target_ids"], item["behavior_targets"], item["attack_target_ids"])
+            item["skill_effects"] = []
+            for behavior in connection.execute(
+                "SELECT b.*,d.name AS effect_name,d.description AS effect_description,d.default_params_json "
+                "FROM skill_behaviors b LEFT JOIN effect_definitions d ON d.effect_key=b.effect_key "
+                "WHERE b.skill_id=? AND b.enabled=1 ORDER BY CASE b.timing "
+                "WHEN 'PRE' THEN 1 WHEN 'ON' THEN 2 WHEN 'POST' THEN 3 WHEN 'TURN_END' THEN 4 ELSE 0 END,b.sort_order,b.id",
+                (row["skill_id"],),
+            ):
+                targets = item["effective_target_ids"] if behavior["target_source"] == "INHERIT_SKILL" else item["behavior_targets"].get(str(behavior["id"]), [])
+                item["skill_effects"].append({
+                    "timing": behavior["timing"], "trigger_condition": behavior["trigger_condition"],
+                    "trigger_scope": behavior["trigger_scope"], "effect_type": behavior["effect_type"],
+                    "value": behavior["effect_value"] if behavior["effect_type"] != "SPECIAL" else None,
+                    "effect_name": behavior["effect_name"], "description": behavior["effect_description"],
+                    "params": {**_loads(behavior["default_params_json"], {}), **_loads(behavior["effect_params_json"], {})},
+                    "target_names": [self._character(connection, tid)["name"] for tid in targets],
+                })
+            item["response_forecasts"] = {}
+            damage = connection.execute("SELECT effect_value FROM skill_behaviors WHERE skill_id=? AND enabled=1 AND effect_type='DAMAGE' ORDER BY CASE timing WHEN 'PRE' THEN 1 WHEN 'ON' THEN 2 ELSE 3 END,sort_order,id LIMIT 1", (row["skill_id"],)).fetchone()
+            if damage:
+                paralysis = self._effect_intensity(connection, battle["id"], row["actor_id"], "status.paralysis")
+                for defender in connection.execute("SELECT c.* FROM characters c JOIN battle_participants bp ON bp.character_id=c.id WHERE bp.battle_id=? AND bp.active_in_stage=1 AND c.faction='FRIENDLY' AND c.current_hp>0 AND c.is_staggered=0", (battle["id"],)):
+                    spec = self._defense_spec(connection, defender)
+                    if spec["kind"] in {"GUARD", "EVADE", "INTERCEPT", "MEET"}:
+                        item["response_forecasts"][str(defender["id"])] = point_advantage(spec["power"], damage["effect_value"] or "0", paralysis)
+
+            actor = self._character(connection, row["actor_id"])
+            item["disabled"] = actor["current_hp"] <= 0 or bool(actor["is_staggered"])
+            result.append(item)
+        return result
+
+    def _area_attack_targets(self, connection, skill_id, actor_id, skill_targets, behavior_targets, actual_targets):
+        """Group all-target damage by its declared scope, never by target count."""
+        skill = connection.execute("SELECT target_method FROM skills WHERE id=?", (skill_id,)).fetchone()
+        actor = self._character(connection, actor_id)
+        area = []
+        for behavior in connection.execute("SELECT * FROM skill_behaviors WHERE skill_id=? AND enabled=1 AND effect_type='DAMAGE'", (skill_id,)):
+            if behavior["target_source"] == "INHERIT_SKILL":
+                if skill["target_method"] == "ALL_TARGETS":
+                    area.extend(skill_targets)
+            elif behavior["target_method"] == "ALL_TARGETS":
+                frozen = behavior_targets.get(str(behavior["id"]))
+                if frozen is not None:
+                    area.extend(frozen)
+                else:
+                    # Older action logs have only the union of actual hit targets.
+                    for tid in actual_targets:
+                        target = self._character(connection, tid)
+                        scope = behavior["target_scope"]
+                        if scope == "ALL" or (scope == "SELF" and tid == actor_id) or (scope == "FRIENDLY" and target["faction"] == actor["faction"]) or (scope == "ENEMY" and target["faction"] != actor["faction"]):
+                            area.append(tid)
+        return [tid for tid in dict.fromkeys(area) if tid in actual_targets]
+
+    @staticmethod
+    def _defense_spec(connection, actor) -> dict[str, Any]:
+        persona = connection.execute("SELECT metadata_json FROM personas WHERE id=?", (actor["active_persona_id"],)).fetchone()
+        if persona is None:
+            persona = connection.execute("SELECT metadata_json FROM character_templates WHERE template_key=?", (actor["template_key"],)).fetchone()
+        metadata = _loads(persona["metadata_json"], {}) if persona else {}
+        spec = metadata.get("defense_skill", {"kind": "GUARD", "power": "1d6+4"})
+        names = {"GUARD": "防御", "COUNTER": "反击", "EVADE": "闪避", "INTERCEPT": "拦截", "MEET": "迎击"}
+        kind = str(spec.get("kind", "GUARD")).upper()
+        if kind not in names:
+            raise BattleRuleError(f"未知防御类型：{kind}")
+        roll_formula(str(spec.get("power", "1d6+4")), rng=random.Random(0))
+        return {"kind": kind, "power": str(spec.get("power", "1d6+4")), "name": spec.get("name", names[kind])}
+
+    def declare_defense(self, character_id: int, intent_id: int | None = None) -> tuple[str, ...]:
+        with self.database.transaction() as connection:
+            battle = self._active_battle(connection)
+            actor = self._character(connection, character_id)
+            if battle["phase"] != "FRIENDLY_ACTION" or actor["faction"] != "FRIENDLY":
+                raise BattleRuleError("防御指令只能在我方行动阶段发布。")
+            if not self._is_active_participant(connection, character_id) or actor["current_hp"] <= 0 or actor["is_staggered"] or actor["current_actions"] <= 0:
+                raise BattleRuleError("该角色当前无法发布防御指令。")
+            if actor["is_core"] and connection.execute(
+                "SELECT 1 FROM characters c JOIN battle_participants bp ON bp.character_id=c.id "
+                "WHERE bp.battle_id=? AND bp.active_in_stage=1 AND c.faction='FRIENDLY' "
+                "AND c.is_core=0 AND c.current_hp>0 AND c.is_staggered=0 AND c.current_actions>0",
+                (battle["id"],)
+            ).fetchone():
+                raise BattleRuleError("助战尚有行动，请先行动或让行。")
+            spec = self._defense_spec(connection, actor)
+            if spec["kind"] in {"INTERCEPT", "MEET"}:
+                intent = connection.execute(
+                    "SELECT * FROM battle_intents WHERE id=? AND battle_id=? AND turn_number=? AND status='PENDING'",
+                    (intent_id, battle["id"], battle["current_turn"]),
+                ).fetchone()
+                if intent is None or len(_loads(intent["target_ids_json"], [])) != 1:
+                    raise BattleRuleError("拦截或迎击需要指定一条单体敌方指令。")
+                attack = connection.execute("SELECT 1 FROM skill_behaviors WHERE skill_id=? AND enabled=1 AND effect_type='DAMAGE' AND target_source='INHERIT_SKILL'", (intent["skill_id"],)).fetchone()
+                skill = connection.execute("SELECT target_method FROM skills WHERE id=?", (intent["skill_id"],)).fetchone()
+                if not attack or skill["target_method"] == "ALL_TARGETS":
+                    raise BattleRuleError("只能拦截或迎击单体攻击，不能接替强化或范围技能。")
+                target = self._character(connection, _loads(intent["target_ids_json"], [])[0])
+                if target["faction"] != "FRIENDLY":
+                    raise BattleRuleError("只能接替指向友方的攻击。")
+            elif intent_id is not None:
+                raise BattleRuleError("只有拦截和迎击可以指定敌方指令。")
+            if connection.execute("SELECT 1 FROM battle_defenses WHERE battle_id=? AND turn_number=? AND actor_id=?", (battle["id"], battle["current_turn"], character_id)).fetchone():
+                raise BattleRuleError("本回合已经发布过防御指令。")
+            connection.execute(
+                "INSERT INTO battle_defenses(battle_id,turn_number,actor_id,kind,power,intent_id) VALUES(?,?,?,?,?,?)",
+                (battle["id"], battle["current_turn"], character_id, spec["kind"], spec["power"], intent_id),
+            )
+            connection.execute("UPDATE characters SET current_actions=current_actions-1 WHERE id=?", (character_id,))
+            message = f"{actor['name']} 已准备{spec['name']}（{spec['power']}）" + (f"，接下{self._character(connection, intent['actor_id'])['name']}的攻击。" if intent_id else "，等待敌方攻击。")
+            self._log(connection, battle["id"], "DEFENSE_ORDER", actor_id=character_id, message=message)
+            messages = [message]
+            messages.extend(self._auto_advance_phase(connection, int(battle["id"])))
+            return tuple(messages)
+
+    def _resolve_enemy_intents(self, connection, battle_id: int) -> list[str]:
+        battle = self._battle(connection, battle_id)
+        intents = connection.execute("SELECT * FROM battle_intents WHERE battle_id=? AND turn_number=? AND status='PENDING' ORDER BY id", (battle_id, battle["current_turn"])).fetchall()
+        messages = []
+        for intent in intents:
+            actor = self._character(connection, intent["actor_id"])
+            if actor["current_hp"] <= 0 or actor["is_staggered"] or not self._is_active_participant(connection, actor["id"]):
+                connection.execute("UPDATE battle_intents SET status='CANCELLED' WHERE id=?", (intent["id"],))
+                messages.append(f"{actor['name']} 已倒下或混乱，攻击取消。")
+                continue
+            target_ids = _loads(intent["target_ids_json"], [])
+            redirect = self._intent_redirect(connection, intent["id"])
+            if redirect:
+                defender = self._character(connection, redirect["actor_id"])
+                if defender["current_hp"] > 0 and not defender["is_staggered"] and self._is_active_participant(connection, defender["id"]):
+                    target_ids = [int(defender["id"])]
+                    messages.append(f"{actor['name']}的攻击被{defender['name']}{'拦截' if redirect['kind'] == 'INTERCEPT' else '迎击'}。")
+            target_ids = [tid for tid in target_ids if self._character(connection, tid)["current_hp"] > 0 and self._is_active_participant(connection, tid)]
+            connection.execute("UPDATE battle_intents SET status=? WHERE id=?", ("RESOLVED" if target_ids else "CANCELLED", intent["id"]))
+            if not target_ids:
+                messages.append(f"{actor['name']}的攻击目标已失效，不重新选择目标。")
+                continue
+            result = self._use_skill(connection, actor["id"], intent["skill_id"], target_ids,
+                consume_action=False, recursion_depth=1, planned_targets=target_ids,
+                planned_behaviors=_loads(intent["behavior_targets_json"], {}), planned_intent_id=int(intent["id"]))
+            messages.extend(result.messages)
+            logged = connection.execute("SELECT payload_json FROM battle_logs WHERE battle_id=? AND event_type='SKILL' AND actor_id=? ORDER BY id DESC LIMIT 1", (battle_id, actor["id"])).fetchone()
+            hit_targets = set(_loads(logged["payload_json"], {}).get("snapshot", {}).get("metadata", {}).get("damage_target_ids", []))
+            for target_id in sorted(hit_targets):
+                defense = self._active_defense(connection, battle, target_id)
+                if defense and (defense["kind"] == "COUNTER" or (defense["kind"] == "MEET" and redirect and defense["id"] == redirect["id"])):
+                    connection.execute("UPDATE battle_defenses SET active=0 WHERE id=?", (defense["id"],))
+                    if self._character(connection, actor["id"])["current_hp"] > 0:
+                        defender = self._character(connection, target_id)
+                        counter = BattleEventSnapshot(battle_id=battle_id, actor_id=target_id, skill_id=None, skill_target_ids=[actor["id"]])
+                        counter.metadata.update(damage_total=0, positive_coins=0, negative_coins=0)
+                        counter.messages.append(f"{defender['name']} 发动反击。")
+                        self._deal_damage(connection, battle, defender, actor,
+                            {"id": 0, "effect_value": defense["power"], "behavior_key": "defense.counter"}, {}, counter, 0, 1)
+                        messages.extend(counter.messages)
+            if redirect and redirect["kind"] == "INTERCEPT":
+                connection.execute("UPDATE battle_defenses SET active=0 WHERE id=?", (redirect["id"],))
+            resolved, outcome = self._resolve_battle_state(connection, battle_id)
+            messages.extend(outcome)
+            if resolved:
+                self._log(connection, battle_id, "ENEMY_RESOLUTION", message="\n".join(messages))
+                return messages
+        self._log(connection, battle_id, "ENEMY_RESOLUTION", message="\n".join(messages))
+        messages.extend(self._settle_turn(connection, battle_id))
+        return messages
+
+    def _active_defense(self, connection, battle, character_id):
+        actor = self._character(connection, character_id)
+        if actor["current_hp"] <= 0 or actor["is_staggered"]:
+            return None
+        return connection.execute("SELECT * FROM battle_defenses WHERE battle_id=? AND turn_number=? AND actor_id=? AND active=1", (battle["id"], battle["current_turn"], character_id)).fetchone()
+
     def end_friendly_phase(self) -> str:
         with self.database.transaction() as connection:
             battle = self._active_battle(connection)
@@ -1570,7 +1796,10 @@ class BattleEngine:
             )
             message = self.narrator.phase_changed(BattlePhase.ENEMY_ACTION)
             self._log(connection, battle["id"], "PHASE_CHANGE", message=message)
-            return message
+            messages = [message]
+            if self._living_count(connection, int(battle["id"]), Faction.ENEMY) and not connection.execute("SELECT 1 FROM characters c JOIN battle_participants bp ON bp.character_id=c.id WHERE bp.battle_id=? AND bp.active_in_stage=1 AND c.faction='ENEMY' AND c.current_hp>0 AND c.max_actions>0", (battle["id"],)).fetchone():
+                messages.extend(self._resolve_enemy_intents(connection, int(battle["id"])))
+            return "\n".join(messages)
 
     def end_turn(self) -> tuple[str, ...]:
         with self.database.transaction() as connection:
@@ -1578,7 +1807,7 @@ class BattleEngine:
             battle_id = int(battle["id"])
             if BattlePhase(battle["phase"]) != BattlePhase.ENEMY_ACTION:
                 raise BattleRuleError("敌方行动尚未结束，不能进行回合清算。")
-            return tuple(self._settle_turn(connection, battle_id))
+            return tuple(self._resolve_enemy_intents(connection, battle_id))
 
     def _settle_turn(
         self, connection: sqlite3.Connection, battle_id: int
@@ -1638,7 +1867,7 @@ class BattleEngine:
         """行动次数耗尽自动推进（2026-07-27 裁定）。
 
         我方全部（含核心）无行动 → 自动移交敌方阶段；
-        敌方全部无行动 → 自动回合清算并开启下一回合。
+        敌方准备次数耗尽 → 锁定全部指令，进入我方应对。
         """
         battle = connection.execute(
             "SELECT * FROM battles WHERE id=? AND status='ACTIVE'", (battle_id,)
@@ -1660,6 +1889,9 @@ class BattleEngine:
 
         messages: list[str] = []
         phase = BattlePhase(battle["phase"])
+        if phase == BattlePhase.ENEMY_PLANNING and not _has_actions("ENEMY"):
+            messages.append(self._lock_enemy_planning(connection, battle_id))
+            phase = BattlePhase.FRIENDLY_ACTION
         if phase == BattlePhase.FRIENDLY_ACTION and not _has_actions("FRIENDLY"):
             connection.execute(
                 "UPDATE battles SET phase=? WHERE id=?",
@@ -1669,8 +1901,7 @@ class BattleEngine:
             self._log(connection, battle_id, "PHASE_CHANGE", message=message)
             messages.append(message)
             phase = BattlePhase.ENEMY_ACTION
-        if phase == BattlePhase.ENEMY_ACTION and not _has_actions("ENEMY"):
-            messages.extend(self._settle_turn(connection, battle_id))
+
         return messages
 
     def _stage_clear_outcome(
@@ -1803,21 +2034,33 @@ class BattleEngine:
         self, connection: sqlite3.Connection, battle_id: int, result: str
     ) -> list[str]:
         participants = connection.execute(
-            "SELECT character_id FROM battle_participants WHERE battle_id=?", (battle_id,)
+            """
+            SELECT bp.character_id,bp.faction,c.name
+            FROM battle_participants bp
+            JOIN characters c ON c.id=bp.character_id
+            WHERE bp.battle_id=?
+            ORDER BY bp.character_id
+            """,
+            (battle_id,),
         ).fetchall()
+        faction_snapshot = [
+            {"name": str(row["name"]), "faction": str(row["faction"])}
+            for row in participants
+        ]
         for row in participants:
             connection.execute(
                 """
                 UPDATE characters SET
-                    max_actions=MAX(1,max_actions-emotion_bonus_actions),
-                    current_actions=MAX(1,max_actions-emotion_bonus_actions),
+                    current_hp=CASE WHEN ?='FRIENDLY' THEN max_hp ELSE current_hp END,
+                    max_actions=MAX(0,max_actions-emotion_bonus_actions),
+                    current_actions=MAX(0,max_actions-emotion_bonus_actions),
                     emotion_bonus_actions=0,emotion_level=0,
                     positive_emotion_coins=0,negative_emotion_coins=0,
                     pending_emotion_upgrade=0,current_stagger=max_stagger,
                     is_staggered=0,stagger_turns=0
                 WHERE id=?
                 """,
-                (row["character_id"],),
+                (row["faction"], row["character_id"]),
             )
         connection.execute(
             """
@@ -1847,6 +2090,8 @@ class BattleEngine:
         label = {"VICTORY": "胜利", "DEFEAT": "战败", "ABORTED": "中止"}.get(
             result, result
         )
+        connection.execute("DELETE FROM battle_intents WHERE battle_id=?", (battle_id,))
+        connection.execute("DELETE FROM battle_defenses WHERE battle_id=?", (battle_id,))
         message = f"{self.narrator.phase_changed(BattlePhase.BATTLE_END)}\n结果：{label}"
         self._log(
             connection,
@@ -1855,7 +2100,129 @@ class BattleEngine:
             payload={"result": result},
             message=message,
         )
+        self._archive_factions_and_remove_generated_enemies(
+            connection, battle_id, faction_snapshot=faction_snapshot
+        )
         return [message]
+
+    def _archive_factions_and_remove_generated_enemies(
+        self,
+        connection: sqlite3.Connection,
+        battle_id: int,
+        *,
+        faction_snapshot: list[dict[str, str]] | None = None,
+    ) -> int:
+        """保全历史阵营后删除一场战斗生成的敌方角色实例。"""
+
+        if faction_snapshot is None:
+            faction_snapshot = [
+                {"name": str(row["name"]), "faction": str(row["faction"])}
+                for row in connection.execute(
+                    """
+                    SELECT c.name,bp.faction
+                    FROM battle_participants bp
+                    JOIN characters c ON c.id=bp.character_id
+                    WHERE bp.battle_id=?
+                    ORDER BY bp.character_id
+                    """,
+                    (battle_id,),
+                ).fetchall()
+            ]
+        for log_row in connection.execute(
+            "SELECT id,payload_json FROM battle_logs WHERE battle_id=?", (battle_id,)
+        ).fetchall():
+            payload = _loads(log_row["payload_json"], {})
+            payload["participant_factions"] = faction_snapshot
+            connection.execute(
+                "UPDATE battle_logs SET payload_json=? WHERE id=?",
+                (_dumps(payload), int(log_row["id"])),
+            )
+
+        generated_enemy_ids = [
+            int(row["character_id"])
+            for row in connection.execute(
+                """
+                SELECT o.character_id
+                FROM battle_spawn_origins o
+                JOIN characters c ON c.id=o.character_id
+                WHERE o.battle_id=? AND c.faction='ENEMY'
+                """,
+                (battle_id,),
+            ).fetchall()
+        ]
+        if not generated_enemy_ids:
+            return 0
+        placeholders = ",".join("?" for _ in generated_enemy_ids)
+        params = tuple(generated_enemy_ids)
+        connection.execute(
+            f"DELETE FROM emotion_logs WHERE battle_id=?"
+            f" AND character_id IN ({placeholders})",
+            (battle_id, *params),
+        )
+        connection.execute(
+            f"UPDATE battle_logs SET actor_id=NULL"
+            f" WHERE battle_id=? AND actor_id IN ({placeholders})",
+            (battle_id, *params),
+        )
+        connection.execute(
+            f"UPDATE battle_logs SET target_id=NULL"
+            f" WHERE battle_id=? AND target_id IN ({placeholders})",
+            (battle_id, *params),
+        )
+        connection.execute(
+            f"DELETE FROM battle_participants WHERE battle_id=?"
+            f" AND character_id IN ({placeholders})",
+            (battle_id, *params),
+        )
+        connection.execute(
+            "DELETE FROM battle_spawn_origins WHERE battle_id=?", (battle_id,)
+        )
+        connection.execute(
+            f"DELETE FROM characters WHERE id IN ({placeholders})", params
+        )
+        return len(generated_enemy_ids)
+
+    def cleanup_completed_battles(self) -> int:
+        """幂等清理旧版本遗留的已结束战斗状态，返回删除的敌人数。"""
+
+        with self.database.transaction() as connection:
+            battle_ids = [
+                int(row["id"])
+                for row in connection.execute(
+                    """
+                    SELECT DISTINCT b.id
+                    FROM battles b
+                    JOIN battle_spawn_origins o ON o.battle_id=b.id
+                    WHERE b.status='COMPLETE'
+                    ORDER BY b.id
+                    """
+                ).fetchall()
+            ]
+            removed = 0
+            for battle_id in battle_ids:
+                # 只恢复当前未参与其他活动战斗的友方，避免异常重启后误改
+                # 仍在展开的新战斗。
+                connection.execute(
+                    """
+                    UPDATE characters SET current_hp=max_hp,current_actions=max_actions,
+                        current_stagger=max_stagger,is_staggered=0,stagger_turns=0,
+                        emotion_level=0,positive_emotion_coins=0,
+                        negative_emotion_coins=0,pending_emotion_upgrade=0
+                    WHERE id IN (
+                        SELECT character_id FROM battle_participants
+                        WHERE battle_id=? AND faction='FRIENDLY'
+                    ) AND id NOT IN (
+                        SELECT bp.character_id FROM battle_participants bp
+                        JOIN battles b ON b.id=bp.battle_id
+                        WHERE b.status='ACTIVE'
+                    )
+                    """,
+                    (battle_id,),
+                )
+                removed += self._archive_factions_and_remove_generated_enemies(
+                    connection, battle_id
+                )
+            return removed
 
     # ------------------------------------------------------------------
     # Skills and targeting
@@ -1925,6 +2292,9 @@ class BattleEngine:
         recursion_depth: int,
         enforce_action_rules: bool = True,
         award_emotion: bool = True,
+        planned_targets: list[int] | None = None,
+        planned_behaviors: dict[str, list[int]] | None = None,
+        planned_intent_id: int | None = None,
     ) -> ActionResult:
         if recursion_depth > 5:
             raise BattleRuleError("技能调用链超过安全深度。")
@@ -1940,11 +2310,14 @@ class BattleEngine:
         ).fetchone()
         if participant is None:
             raise BattleRuleError("该角色不在当前阶段。")
+        planning = actor["faction"] == "ENEMY" and battle["phase"] == "ENEMY_PLANNING" and enforce_action_rules
         required_phase = (
             BattlePhase.FRIENDLY_ACTION
             if actor["faction"] == Faction.FRIENDLY.value
-            else BattlePhase.ENEMY_ACTION
+            else (BattlePhase.ENEMY_PLANNING if planning else BattlePhase.ENEMY_ACTION)
         )
+        if enforce_action_rules and actor["faction"] == "ENEMY" and not planning and planned_targets is None:
+            raise BattleRuleError("敌方只能执行已锁定的指令；请结算敌方阶段。")
         if enforce_action_rules and BattlePhase(battle["phase"]) != required_phase:
             raise BattleRuleError("行动阶段与角色阵营不一致。")
         if actor["current_hp"] <= 0:
@@ -1978,53 +2351,71 @@ class BattleEngine:
                 )
 
         skill = self._ensure_skill_owned(connection, actor, skill_id)
-        if int(actor["emotion_level"]) < int(skill["emotion_requirement"]):
-            raise BattleRuleError(f"情感等级不足，需要等级 {skill['emotion_requirement']}。")
-        if skill["skill_type"] == SkillType.EGO.value:
-            if self._ego_used(connection, battle_id, character_id):
-                raise BattleRuleError("该角色本场战斗已经展开过 E.G.O。")
-            # Reserve before executing any behavior. The enclosing transaction
-            # rolls this back on failure, while recursive invoke_skill handlers
-            # can no longer enter a second E.G.O before the outer one returns.
-            connection.execute(
-                """
-                INSERT INTO battle_ego_usage(battle_id,character_id,ego_used,used_skill_id,used_at)
-                VALUES(?,?,1,?,CURRENT_TIMESTAMP)
-                ON CONFLICT(battle_id,character_id) DO UPDATE SET
-                    ego_used=1,used_skill_id=excluded.used_skill_id,used_at=CURRENT_TIMESTAMP
-                """,
-                (battle_id, character_id, skill_id),
-            )
-        elif self._cooldown(connection, battle_id, character_id, skill_id) > 0:
-            raise BattleRuleError("技能仍处于冷却记录中。")
-        max_uses = skill["max_uses_per_battle"]
-        if max_uses is not None:
-            used = self._skill_uses(connection, battle_id, character_id, skill_id)
-            if used >= int(max_uses):
-                raise BattleRuleError("该技能本场战斗的使用次数已经耗尽。")
-            connection.execute(
-                """
-                INSERT INTO battle_skill_usage(battle_id,character_id,skill_id,uses)
-                VALUES(?,?,?,1)
-                ON CONFLICT(battle_id,character_id,skill_id)
-                DO UPDATE SET uses=uses+1
-                """,
-                (battle_id, character_id, skill_id),
-            )
-        if skill["skill_type"] == SkillType.NORMAL.value and int(skill["base_cooldown"]) > 0:
-            connection.execute(
-                """
-                INSERT INTO battle_skill_cooldowns(battle_id,character_id,skill_id,remaining)
-                VALUES(?,?,?,?)
-                ON CONFLICT(battle_id,character_id,skill_id) DO UPDATE SET
-                    remaining=excluded.remaining
-                """,
-                (battle_id, character_id, skill_id, int(skill["base_cooldown"])),
-            )
+        if planned_targets is None:
+            if int(actor["emotion_level"]) < int(skill["emotion_requirement"]):
+                raise BattleRuleError(f"情感等级不足，需要等级 {skill['emotion_requirement']}。")
+            if skill["skill_type"] == SkillType.EGO.value:
+                if self._ego_used(connection, battle_id, character_id):
+                    raise BattleRuleError("该角色本场战斗已经展开过 E.G.O。")
+                # Reserve before executing any behavior. The enclosing transaction
+                # rolls this back on failure, while recursive invoke_skill handlers
+                # can no longer enter a second E.G.O before the outer one returns.
+                connection.execute(
+                    """
+                    INSERT INTO battle_ego_usage(battle_id,character_id,ego_used,used_skill_id,used_at)
+                    VALUES(?,?,1,?,CURRENT_TIMESTAMP)
+                    ON CONFLICT(battle_id,character_id) DO UPDATE SET
+                        ego_used=1,used_skill_id=excluded.used_skill_id,used_at=CURRENT_TIMESTAMP
+                    """,
+                    (battle_id, character_id, skill_id),
+                )
+            elif self._cooldown(connection, battle_id, character_id, skill_id) > 0:
+                raise BattleRuleError("技能仍处于冷却记录中。")
+            max_uses = skill["max_uses_per_battle"]
+            if max_uses is not None:
+                used = self._skill_uses(connection, battle_id, character_id, skill_id)
+                if used >= int(max_uses):
+                    raise BattleRuleError("该技能本场战斗的使用次数已经耗尽。")
+                connection.execute(
+                    """
+                    INSERT INTO battle_skill_usage(battle_id,character_id,skill_id,uses)
+                    VALUES(?,?,?,1)
+                    ON CONFLICT(battle_id,character_id,skill_id)
+                    DO UPDATE SET uses=uses+1
+                    """,
+                    (battle_id, character_id, skill_id),
+                )
+            if skill["skill_type"] == SkillType.NORMAL.value and int(skill["base_cooldown"]) > 0:
+                connection.execute(
+                    """
+                    INSERT INTO battle_skill_cooldowns(battle_id,character_id,skill_id,remaining)
+                    VALUES(?,?,?,?)
+                    ON CONFLICT(battle_id,character_id,skill_id) DO UPDATE SET
+                        remaining=excluded.remaining
+                    """,
+                    (battle_id, character_id, skill_id, int(skill["base_cooldown"])),
+                )
 
-        skill_targets = self._resolve_skill_targets(
-            connection, battle_id, actor, skill, selected_target_ids
+        skill_targets = (
+            [self._character(connection, target_id) for target_id in planned_targets]
+            if planned_targets is not None else
+            self._resolve_skill_targets(connection, battle_id, actor, skill, selected_target_ids)
         )
+        if planning:
+            behavior_targets = {}
+            for behavior in connection.execute("SELECT * FROM skill_behaviors WHERE skill_id=? AND enabled=1 AND target_source='AUTO'", (skill_id,)):
+                behavior_targets[str(behavior["id"])] = [int(row["id"]) for row in self._resolve_behavior_targets(connection, battle_id, actor, behavior, skill_targets, None)]
+            cursor = connection.execute(
+                "INSERT INTO battle_intents(battle_id,turn_number,actor_id,skill_id,target_ids_json,behavior_targets_json) VALUES(?,?,?,?,?,?)",
+                (battle_id, battle["current_turn"], character_id, skill_id,
+                 _dumps([int(row["id"]) for row in skill_targets]), _dumps(behavior_targets)),
+            )
+            connection.execute("UPDATE characters SET current_actions=current_actions-1 WHERE id=?", (character_id,))
+            message = f"{actor['name']} · {skill['name']} → " + "、".join(row["name"] for row in skill_targets)
+            self._log(connection, battle_id, "ENEMY_INTENT", actor_id=character_id, skill_id=skill_id, message=message)
+            messages = [message, *self._auto_advance_phase(connection, battle_id)]
+            phase = BattlePhase(self._battle(connection, battle_id)["phase"])
+            return ActionResult(battle_id, character_id, skill_id, tuple(messages), phase)
         snapshot = BattleEventSnapshot(
             battle_id=battle_id,
             actor_id=character_id,
@@ -2055,6 +2446,10 @@ class BattleEngine:
             """,
             (skill_id,),
         ).fetchall()
+        if planned_behaviors is not None:
+            snapshot.metadata["planned_behaviors"] = planned_behaviors
+        if planned_intent_id is not None:
+            snapshot.metadata["planned_intent_id"] = planned_intent_id
         snapshot.metadata["behavior_keys"] = [row["behavior_key"] for row in behaviors]
         for timing in (Timing.PRE, Timing.ON, Timing.POST):
             for behavior in behaviors:
@@ -2072,11 +2467,12 @@ class BattleEngine:
         self._register_deferred_skill_behaviors(
             connection, battle_id, actor, skill, behaviors, snapshot.skill_target_ids
         )
-        if consume_action:
-            connection.execute(
-                "UPDATE characters SET current_actions=MAX(0,current_actions-1) WHERE id=?",
-                (character_id,),
-            )
+        if consume_action or planned_targets is not None:
+            if consume_action:
+                connection.execute(
+                    "UPDATE characters SET current_actions=MAX(0,current_actions-1) WHERE id=?",
+                    (character_id,),
+                )
             self._process_bleeding_after_action(connection, battle_id, character_id, messages)
             self._dispatch_hooks(
                 connection,
@@ -2133,14 +2529,14 @@ class BattleEngine:
         if repetitions is None:
             return
         for condition_target_id in repetitions:
-            targets = self._resolve_behavior_targets(
-                connection,
-                battle["id"],
-                actor,
-                behavior,
-                skill_targets,
-                condition_target_id,
-            )
+            frozen = snapshot.metadata.get("planned_behaviors", {})
+            if str(behavior["id"]) in frozen:
+                targets = [self._character(connection, tid) for tid in frozen[str(behavior["id"])]]
+                targets = [row for row in targets if row["current_hp"] > 0 and self._is_active_participant(connection, row["id"])]
+            else:
+                targets = self._resolve_behavior_targets(
+                    connection, battle["id"], actor, behavior, skill_targets, condition_target_id,
+                )
             effect_type = behavior["effect_type"]
             params = _loads(behavior["effect_params_json"], {})
             if effect_type == "SPECIAL":
@@ -2298,8 +2694,32 @@ class BattleEngine:
             else:
                 connection.execute("DELETE FROM active_effects WHERE id=?", (paralysis["id"],))
 
+        defense = self._active_defense(connection, battle, target["id"]) if actor["faction"] == "ENEMY" else None
+        if defense and defense["kind"] == "INTERCEPT":
+            intent_id = snapshot.metadata.get("planned_intent_id")
+            redirect = self._intent_redirect(connection, intent_id) if intent_id is not None else None
+            if not redirect or redirect["id"] != defense["id"]:
+                defense = None
+        block_power = 0
+        if defense and defense["kind"] in {"EVADE", "GUARD", "INTERCEPT"}:
+            defense_roll = roll_formula(defense["power"], rng=self.rng)
+            attack_power = max(0, roll.total + int(damage_context.get("flat_bonus", 0)))
+            if defense["kind"] == "EVADE":
+                success = defense_roll.total >= attack_power
+                snapshot.messages.append(f"{target['name']} 闪避 {defense_roll.total} / 攻击 {attack_power}：" + ("成功，可继续闪避。" if success else "失败，本回合闪避结束。"))
+                if success:
+                    snapshot.hits.append(HitSnapshot(behavior_id=int(behavior["id"]), hit_index=hit_index, target_id=int(target["id"]), hit=False, target_faction=Faction(target["faction"])))
+                    snapshot.metadata.pop("damage_context", None)
+                    return
+                connection.execute("UPDATE battle_defenses SET active=0 WHERE id=?", (defense["id"],))
+            else:
+                block_power = max(0, defense_roll.total)
+                snapshot.messages.append(f"{target['name']} 防御点数：{block_power}。")
+
+        snapshot.metadata.setdefault("damage_target_ids", []).append(int(target["id"]))
+        snapshot.metadata.setdefault("damage_targets_by_behavior", {}).setdefault(str(behavior["id"]), []).append(int(target["id"]))
         flat_bonus = int(damage_context.get("flat_bonus", 0))
-        base = max(0, roll.total + flat_bonus)
+        base = max(0, roll.total + flat_bonus - block_power)
         strength = self._effect_intensity(connection, battle["id"], actor["id"], "status.strength")
         weakness = self._effect_intensity(connection, battle["id"], actor["id"], "status.weakness")
         guard = self._effect_intensity(connection, battle["id"], target["id"], "status.guard")
@@ -2730,11 +3150,14 @@ class BattleEngine:
         messages.extend(outcome_messages)
         if resolved:
             return messages
-        connection.execute(
-            "UPDATE battles SET phase=? WHERE id=?",
-            (BattlePhase.FRIENDLY_ACTION.value, battle_id),
-        )
-        messages.append(self.narrator.phase_changed(BattlePhase.FRIENDLY_ACTION))
+        has_enemies = connection.execute(
+            "SELECT 1 FROM characters c JOIN battle_participants bp ON bp.character_id=c.id "
+            "WHERE bp.battle_id=? AND bp.active_in_stage=1 AND c.faction='ENEMY' "
+            "AND c.current_hp>0 AND c.is_staggered=0 AND c.current_actions>0 LIMIT 1", (battle_id,)
+        ).fetchone()
+        phase = BattlePhase.ENEMY_PLANNING if has_enemies else BattlePhase.FRIENDLY_ACTION
+        connection.execute("UPDATE battles SET phase=? WHERE id=?", (phase.value, battle_id))
+        messages.append(self.narrator.phase_changed(phase))
         return messages
 
     def _process_emotion_upgrade(
@@ -3287,8 +3710,11 @@ class BattleEngine:
                 dict(row)
                 for row in connection.execute(
                     """
-                    SELECT c.*,bp.active_in_stage FROM characters c
+                    SELECT c.*,bp.active_in_stage,
+                           p.persona_key,p.name AS persona_name
+                    FROM characters c
                     JOIN battle_participants bp ON bp.character_id=c.id
+                    LEFT JOIN personas p ON p.id=c.active_persona_id
                     WHERE bp.battle_id=? ORDER BY c.faction DESC,c.id
                     """,
                     (battle["id"],),
@@ -3298,7 +3724,7 @@ class BattleEngine:
             for row in connection.execute(
                 """
                 SELECT e.character_id,e.effect_key,e.category,e.intensity,e.stacks,
-                       e.remaining_turns,e.params_json,d.name AS effect_name
+                       e.remaining_turns,e.params_json,d.name AS effect_name,d.description AS effect_description
                 FROM active_effects e
                 LEFT JOIN effect_definitions d ON d.effect_key=e.effect_key
                 WHERE e.battle_id=? ORDER BY e.id
@@ -3312,7 +3738,7 @@ class BattleEngine:
             for row in connection.execute(
                 """
                 SELECT p.character_id,p.effect_key,p.intensity,p.stacks,p.activate_at,
-                       d.name AS effect_name
+                       d.name AS effect_name,d.description AS effect_description
                 FROM battle_pending_effects p
                 LEFT JOIN effect_definitions d ON d.effect_key=p.effect_key
                 WHERE p.battle_id=? ORDER BY p.id
@@ -3323,7 +3749,7 @@ class BattleEngine:
             pages_by_character: dict[int, list[dict[str, Any]]] = {}
             for row in connection.execute(
                 """
-                SELECT ap.character_id,p.name,p.page_type,p.level
+                SELECT ap.character_id,p.name,p.page_type,p.level,p.description
                 FROM battle_active_pages ap
                 JOIN abnormality_pages p ON p.id=ap.page_id
                 WHERE ap.battle_id=? ORDER BY ap.activated_at,p.id
@@ -3338,6 +3764,24 @@ class BattleEngine:
                 participant["pages"] = pages_by_character.get(character_id, [])
             result = dict(battle)
             result["participants"] = participants
+            result["enemy_intents"] = self._intent_rows(connection, battle)
+            result["friendly_attacks"] = []
+            for log in connection.execute(
+                "SELECT l.actor_id,l.skill_id,l.payload_json,s.name AS skill_name FROM battle_logs l "
+                "JOIN characters c ON c.id=l.actor_id JOIN skills s ON s.id=l.skill_id "
+                "WHERE l.battle_id=? AND l.turn_number=? AND l.event_type='SKILL' AND c.faction='FRIENDLY' ORDER BY l.id DESC LIMIT 6",
+                (battle["id"], battle["current_turn"]),
+            ):
+                snapshot = _loads(log["payload_json"], {}).get("snapshot", {})
+                targets = list(dict.fromkeys(snapshot.get("metadata", {}).get("damage_target_ids", [])))
+                if targets:
+                    area_targets = self._area_attack_targets(connection, log["skill_id"], log["actor_id"], snapshot.get("skill_target_ids", []), snapshot.get("metadata", {}).get("damage_targets_by_behavior", {}), targets)
+                    result["friendly_attacks"].append({"actor_id": log["actor_id"], "skill_name": log["skill_name"], "target_ids": targets, "area_target_ids": area_targets})
+            result["defenses"] = [dict(row) for row in connection.execute(
+                "SELECT * FROM battle_defenses WHERE battle_id=? AND turn_number=?",
+                (battle["id"], battle["current_turn"]))]
+            for participant in participants:
+                participant["defense_skill"] = self._defense_spec(connection, participant)
             return result
 
     def _register_builtin_special_effects(self) -> None:
@@ -4146,6 +4590,23 @@ class BattleEngine:
             (battle_id, max_page_level, preferred),
         ).fetchall()
         if not rows:
+            pool_counts = connection.execute(
+                """
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN pool.status='AVAILABLE' THEN 1 ELSE 0 END) AS available
+                FROM battle_page_pool pool
+                JOIN abnormality_pages p ON p.id=pool.page_id
+                WHERE pool.battle_id=? AND p.enabled=1
+                  AND p.page_type IN ('AWAKENING','BREAKDOWN')
+                """,
+                (battle_id,),
+            ).fetchone()
+            if (
+                pool_counts is not None
+                and int(pool_counts["total"] or 0) > 0
+                and int(pool_counts["available"] or 0) == 0
+            ):
+                return ["◇ 携带的异想体书页已用尽，本次选择跳过。"]
             return ["◇ 携带的异想体没有可选书页，本次选择跳过。"]
         preferred_rows = [row for row in rows if row["page_type"] == preferred]
         other_rows = [row for row in rows if row["page_type"] != preferred]

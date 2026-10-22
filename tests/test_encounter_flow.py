@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from conftest import lock_enemy_planning
+
 import json
 
 import pytest
@@ -12,6 +14,7 @@ from conftest import BASE_PACK
 
 
 CORE_PERSONAS = BASE_PACK.with_name("core_personas.json")
+SHOWCASE_PACK = BASE_PACK.with_name("test_showcase.json")
 
 
 def _engine(database: object) -> BattleEngine:
@@ -19,6 +22,152 @@ def _engine(database: object) -> BattleEngine:
     loader.load_path(BASE_PACK)
     loader.load_path(CORE_PERSONAS)
     return BattleEngine(database)
+
+
+def _showcase_engine(database: object) -> BattleEngine:
+    loader = ContentLoader(database)
+    loader.load_path(BASE_PACK)
+    loader.load_path(CORE_PERSONAS)
+    loader.load_path(SHOWCASE_PACK)
+    return BattleEngine(database)
+
+
+@pytest.mark.parametrize("result", ["ABORTED", "VICTORY"])
+def test_battle_finish_heals_friendlies_and_removes_generated_enemies(
+    database: object, result: str
+) -> None:
+    engine = _engine(database)
+    setup_id = engine.prepare_encounter("encounter.training_ground")
+    jue = engine.get_core_character("珏")
+    persona = next(
+        item for item in engine.list_personas(int(jue["id"])) if item["is_default"]
+    )
+    engine.add_core_to_setup(int(jue["id"]), int(persona["id"]), setup_id=setup_id)
+    helper = engine.spawn_character("unit.training_assistant", Faction.FRIENDLY)
+    engine.add_noncore_friendlies_to_setup([helper], setup_id=setup_id)
+    battle_id, _ = engine.launch_prepared_battle(setup_id)
+    lock_enemy_planning(engine)
+
+    generated_enemy_ids = [
+        int(row["character_id"])
+        for row in database.fetch_all(
+            "SELECT character_id FROM battle_spawn_origins WHERE battle_id=?",
+            (battle_id,),
+        )
+    ]
+    assert generated_enemy_ids
+    with database.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE characters SET current_hp=1,current_actions=0,current_stagger=1,
+                is_staggered=1,stagger_turns=2,emotion_level=3,
+                positive_emotion_coins=2,negative_emotion_coins=1
+            WHERE id IN (?,?)
+            """,
+            (int(jue["id"]), helper),
+        )
+
+    engine.end_battle(result)
+
+    for character_id in (int(jue["id"]), helper):
+        character = engine.get_character(character_id)
+        assert int(character["current_hp"]) == int(character["max_hp"])
+        assert int(character["current_actions"]) == int(character["max_actions"])
+        assert int(character["current_stagger"]) == int(character["max_stagger"])
+        assert int(character["is_staggered"]) == 0
+        assert int(character["emotion_level"]) == 0
+    assert not database.fetch_all(
+        "SELECT id FROM characters WHERE id IN ("
+        + ",".join("?" for _ in generated_enemy_ids)
+        + ")",
+        tuple(generated_enemy_ids),
+    )
+    final_log = database.fetch_one(
+        """
+        SELECT payload_json FROM battle_logs
+        WHERE battle_id=? AND event_type='BATTLE_END'
+        """,
+        (battle_id,),
+    )
+    assert final_log is not None
+    assert json.loads(final_log["payload_json"])["participant_factions"]
+
+
+def test_persona_dummy_has_no_actions_and_auto_skips_enemy_phase(
+    database: object,
+) -> None:
+    engine = _showcase_engine(database)
+    setup_id = engine.prepare_encounter("encounter.showcase.persona_dummy")
+    jue = engine.get_core_character("珏")
+    persona = next(
+        item for item in engine.list_personas(int(jue["id"])) if item["is_default"]
+    )
+    engine.add_core_to_setup(int(jue["id"]), int(persona["id"]), setup_id=setup_id)
+    battle_id, _ = engine.launch_prepared_battle(setup_id)
+    lock_enemy_planning(engine)
+    dummy = database.fetch_one(
+        """
+        SELECT c.current_hp,c.max_hp,c.current_actions,c.max_actions
+        FROM battle_spawn_origins o
+        JOIN characters c ON c.id=o.character_id
+        WHERE o.battle_id=?
+        """,
+        (battle_id,),
+    )
+    assert dummy is not None
+    assert (int(dummy["current_hp"]), int(dummy["max_hp"])) == (9999, 9999)
+    assert (int(dummy["current_actions"]), int(dummy["max_actions"])) == (0, 0)
+
+    messages = engine.end_friendly_phase()
+    status = engine.battle_status()
+    assert "敌方行动阶段" in messages
+    assert status["phase"] == BattlePhase.FRIENDLY_ACTION.value
+    assert int(status["current_turn"]) == 2
+
+
+def test_startup_cleanup_repairs_legacy_completed_battle(database: object) -> None:
+    engine = _engine(database)
+    setup_id = engine.prepare_encounter("encounter.training_ground")
+    jue = engine.get_core_character("珏")
+    persona = next(
+        item for item in engine.list_personas(int(jue["id"])) if item["is_default"]
+    )
+    engine.add_core_to_setup(int(jue["id"]), int(persona["id"]), setup_id=setup_id)
+    battle_id, _ = engine.launch_prepared_battle(setup_id)
+    lock_enemy_planning(engine)
+    enemy_ids = [
+        int(row["character_id"])
+        for row in database.fetch_all(
+            "SELECT character_id FROM battle_spawn_origins WHERE battle_id=?",
+            (battle_id,),
+        )
+    ]
+    with database.transaction() as connection:
+        connection.execute(
+            "UPDATE characters SET current_hp=1 WHERE id=?", (int(jue["id"]),)
+        )
+        connection.execute(
+            """
+            UPDATE battles SET status='COMPLETE',phase='BATTLE_END',
+                result='ABORTED',ended_at=CURRENT_TIMESTAMP
+            WHERE id=?
+            """,
+            (battle_id,),
+        )
+        connection.execute(
+            "UPDATE battle_setups SET status='COMPLETE' WHERE id=?", (setup_id,)
+        )
+
+    assert engine.cleanup_completed_battles() == len(enemy_ids)
+    assert engine.cleanup_completed_battles() == 0
+    healed = engine.get_character(int(jue["id"]))
+    assert int(healed["current_hp"]) == int(healed["max_hp"])
+    assert not database.fetch_all(
+        "SELECT id FROM characters WHERE id IN ("
+        + ",".join("?" for _ in enemy_ids)
+        + ")",
+        tuple(enemy_ids),
+    )
 
 
 def test_encounter_formation_applies_core_persona_and_spawns_stage_enemies(
@@ -49,6 +198,7 @@ def test_encounter_formation_applies_core_persona_and_spawns_stage_enemies(
     ) == 4
 
     battle_id, _ = engine.launch_prepared_battle()
+    lock_enemy_planning(engine)
     assert engine.list_battle_setups()[0]["id"] == setup_id
     assert engine.list_battle_setups()[0]["status"] == "ACTIVE"
     assert engine.get_character(int(jue["id"]))["max_hp"] == 150
@@ -70,6 +220,7 @@ def test_enemy_can_be_added_after_the_encounter_has_started(database: object) ->
     )
     engine.add_core_to_setup(int(jue["id"]), int(initial["id"]))
     engine.launch_prepared_battle()
+    lock_enemy_planning(engine)
 
     message = engine.add_enemy_to_formation(
         "enemy.training_shell", amount=1, name="途中介入者"
@@ -161,6 +312,7 @@ def test_ready_revision_guard_rejects_a_changed_formation(database: object) -> N
 
     with pytest.raises(BattleRuleError, match="发生变化"):
         engine.launch_prepared_battle(setup_id, expected_revision=revision)
+        lock_enemy_planning(engine)
 
     assert engine.battle_setup_status(setup_id)["status"] == "STANDBY"
 
@@ -206,6 +358,7 @@ def test_noncore_ally_cannot_replace_required_core_trigger(database: object) -> 
 
     with pytest.raises(BattleRuleError, match="核心角色"):
         engine.launch_prepared_battle(setup_id)
+        lock_enemy_planning(engine)
 
 
 def test_target_hp_condition_can_end_stage_while_other_enemies_live(database: object) -> None:
@@ -217,6 +370,7 @@ def test_target_hp_condition_can_end_stage_while_other_enemies_live(database: ob
     )
     engine.add_core_to_setup(int(jue["id"]), int(initial["id"]), setup_id=setup_id)
     battle_id, _ = engine.launch_prepared_battle(setup_id)
+    lock_enemy_planning(engine)
     with database.transaction() as connection:
         connection.execute(
             """
@@ -244,6 +398,7 @@ def test_target_hp_condition_can_end_stage_while_other_enemies_live(database: ob
 
     engine.end_friendly_phase()
     engine.end_turn()
+    lock_enemy_planning(engine)
     assert engine.battle_status()["phase"] == BattlePhase.STAGE_END.value
 
 
@@ -309,6 +464,7 @@ def test_launch_rolls_back_persona_spawns_and_battle_as_one_transaction(
 
     with pytest.raises(BattleRuleError, match="异想体未登记"):
         engine.launch_prepared_battle(setup_id)
+        lock_enemy_planning(engine)
 
     assert int(database.fetch_one("SELECT COUNT(*) amount FROM characters")["amount"]) == before_count
     assert database.fetch_one("SELECT 1 FROM battles WHERE status='ACTIVE'") is None
@@ -325,6 +481,7 @@ def test_last_stage_next_stage_misconfiguration_finishes_as_victory(database: ob
     initial = next(item for item in engine.list_personas(int(jue["id"])) if item["is_default"])
     engine.add_core_to_setup(int(jue["id"]), int(initial["id"]), setup_id=setup_id)
     battle_id, _ = engine.launch_prepared_battle(setup_id)
+    lock_enemy_planning(engine)
     with database.transaction() as connection:
         connection.execute(
             "UPDATE battle_setup_stages SET clear_outcome='NEXT_STAGE' WHERE setup_id=? AND stage_number=2",
@@ -345,6 +502,7 @@ def test_last_stage_next_stage_misconfiguration_finishes_as_victory(database: ob
 
     engine.end_friendly_phase()
     engine.end_turn()
+    lock_enemy_planning(engine)
     battle = database.fetch_one("SELECT status,result FROM battles WHERE id=?", (battle_id,))
     assert battle["status"] == "COMPLETE"
     assert battle["result"] == "VICTORY"
@@ -359,6 +517,7 @@ def test_battle_scoped_registered_behavior_cannot_follow_a_retired_owner(
     initial = next(item for item in engine.list_personas(int(jue["id"])) if item["is_default"])
     engine.add_core_to_setup(int(jue["id"]), int(initial["id"]), setup_id=setup_id)
     battle_id, _ = engine.launch_prepared_battle(setup_id)
+    lock_enemy_planning(engine)
     status = engine.battle_status()
     old_enemy = next(
         item for item in status["participants"]
@@ -413,6 +572,7 @@ def test_battle_scoped_registered_behavior_cannot_follow_a_retired_owner(
         engine._finish_stage(connection, battle_id)
 
     engine.start_prepared_stage()
+    lock_enemy_planning(engine)
     assert int(engine.get_character(int(jue["id"]))["current_hp"]) == hp_before
     assert int(engine.get_character(int(old_enemy["id"]))["current_hp"]) == old_enemy_hp
     assert database.fetch_one(
@@ -472,6 +632,7 @@ def test_turn_start_behavior_resolves_friendly_wipe_before_action_phase(
     )
     engine.add_core_to_setup(int(jue["id"]), int(initial["id"]), setup_id=setup_id)
     battle_id, _ = engine.launch_prepared_battle(setup_id)
+    lock_enemy_planning(engine)
     enemy = next(
         item
         for item in engine.battle_status()["participants"]
@@ -490,6 +651,7 @@ def test_turn_start_behavior_resolves_friendly_wipe_before_action_phase(
 
     engine.end_friendly_phase()
     engine.end_turn()
+    lock_enemy_planning(engine)
 
     battle = database.fetch_one(
         "SELECT status,result,phase FROM battles WHERE id=?", (battle_id,)
@@ -535,6 +697,7 @@ def test_turn_start_behavior_resolves_stage_condition_before_action_phase(
     )
     engine.add_core_to_setup(int(jue["id"]), int(initial["id"]), setup_id=setup_id)
     battle_id, _ = engine.launch_prepared_battle(setup_id)
+    lock_enemy_planning(engine)
     target = database.fetch_one(
         """
         SELECT o.character_id FROM battle_spawn_origins o
@@ -557,6 +720,7 @@ def test_turn_start_behavior_resolves_stage_condition_before_action_phase(
 
     engine.end_friendly_phase()
     engine.end_turn()
+    lock_enemy_planning(engine)
 
     status = engine.battle_status()
     assert status["phase"] == BattlePhase.STAGE_END.value

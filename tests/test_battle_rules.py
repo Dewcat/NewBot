@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from conftest import lock_enemy_planning
+
 import json
 
 import pytest
@@ -28,8 +30,10 @@ def _active_effect(world: object, character_id: int, effect_key: str):
     )
 
 
-def _start(world: object) -> None:
+def _start(world: object, enemy_skill="skill.test.wait") -> None:
     battle_id, _messages = world.engine.start_battle([world.hero_id], [world.enemy_id])
+    world.engine.use_skill(world.enemy_id, world.skill_ids[enemy_skill], [world.hero_id])
+    lock_enemy_planning(world.engine)
     world.battle_id = battle_id
 
 
@@ -51,8 +55,8 @@ def test_turn_is_friendly_actions_then_enemy_actions_then_turn_end(world: object
     with pytest.raises(BattleRuleError):
         world.engine.use_skill(world.hero_id, wait, [world.enemy_id])
 
-    world.engine.use_skill(world.enemy_id, wait, [world.hero_id])
     world.engine.end_turn()
+    lock_enemy_planning(world.engine)
 
     status = world.engine.battle_status()
     assert status["current_turn"] == 2
@@ -108,22 +112,23 @@ def test_normal_cooldown_only_advances_at_turn_end(world: object) -> None:
     # （我方行动耗尽后自动移交敌方阶段，无需手动 end_friendly_phase。）
     world.engine.use_skill(world.hero_id, wait, [world.enemy_id])
     assert _cooldown(world, cooldown_skill) == 2
-    world.engine.use_skill(world.enemy_id, wait, [world.hero_id])
     assert _cooldown(world, cooldown_skill) == 2
 
     world.engine.end_turn()
+    lock_enemy_planning(world.engine)
     assert _cooldown(world, cooldown_skill) == 1
     with pytest.raises(BattleRuleError):
         world.engine.use_skill(world.hero_id, cooldown_skill, [world.enemy_id])
 
     world.engine.end_friendly_phase()
     world.engine.end_turn()
+    lock_enemy_planning(world.engine)
     assert _cooldown(world, cooldown_skill) == 0
     world.engine.use_skill(world.hero_id, cooldown_skill, [world.enemy_id])
 
 
 def test_generic_effects_clear_but_pending_effects_activate_next_turn(world: object) -> None:
-    _start(world)
+    _start(world, "skill.common.delayed_weakness")
     guard = world.skill_ids["skill.common.guard"]
     delayed_weakness = world.skill_ids["skill.common.delayed_weakness"]
 
@@ -133,20 +138,12 @@ def test_generic_effects_clear_but_pending_effects_activate_next_turn(world: obj
     assert int(shield["intensity"]) == 8
 
     world.engine.end_friendly_phase()
-    world.engine.use_skill(world.enemy_id, delayed_weakness, [world.hero_id])
-
+    # The planned skill has not executed yet, so no next-turn effect is queued.
     assert _active_effect(world, world.hero_id, "status.weakness") is None
-    pending = world.database.fetch_one(
-        """
-        SELECT * FROM battle_pending_effects
-        WHERE battle_id=? AND character_id=? AND effect_key=?
-        """,
-        (world.battle_id, world.hero_id, "status.weakness"),
-    )
-    assert pending is not None
-    assert pending["activate_at"] == "NEXT_TURN_START"
+    assert world.database.fetch_one("SELECT id FROM battle_pending_effects WHERE battle_id=?", (world.battle_id,)) is None
 
     world.engine.end_turn()
+    lock_enemy_planning(world.engine)
 
     assert _active_effect(world, world.hero_id, "status.shield") is None
     weakness = _active_effect(world, world.hero_id, "status.weakness")
@@ -161,6 +158,7 @@ def test_generic_effects_clear_but_pending_effects_activate_next_turn(world: obj
     # at the following TURN_END.
     world.engine.end_friendly_phase()
     world.engine.end_turn()
+    lock_enemy_planning(world.engine)
     assert _active_effect(world, world.hero_id, "status.weakness") is None
 
 
@@ -172,6 +170,7 @@ def test_fixed_status_damage_does_not_reduce_stagger(world: object) -> None:
     world.engine.use_skill(world.hero_id, ignite, [world.enemy_id])
     world.engine.end_friendly_phase()
     world.engine.end_turn()
+    lock_enemy_planning(world.engine)
 
     after = world.engine.get_character(world.enemy_id)
     assert after["current_hp"] == before["current_hp"] - 7
@@ -212,6 +211,7 @@ def test_reaching_emotion_level_four_grants_one_battle_action(world: object) -> 
 
     world.engine.end_friendly_phase()
     world.engine.end_turn()
+    lock_enemy_planning(world.engine)
 
     level_four = world.engine.get_character(world.hero_id)
     assert level_four["emotion_level"] == 4
@@ -233,6 +233,7 @@ def test_reaching_emotion_level_four_grants_one_battle_action(world: object) -> 
         )
     world.engine.end_friendly_phase()
     world.engine.end_turn()
+    lock_enemy_planning(world.engine)
     level_five = world.engine.get_character(world.hero_id)
     assert level_five["emotion_level"] == 5
     assert level_five["max_actions"] == 3
@@ -281,6 +282,7 @@ def test_any_ego_can_only_be_used_once_per_character_per_battle(world: object) -
     # Usage is battle-scoped, so a new battle permits a different E.G.O.
     world.engine.end_battle()
     second_battle, _ = world.engine.start_battle([world.hero_id], [world.enemy_id])
+    lock_enemy_planning(world.engine)
     world.battle_id = second_battle
     with world.database.transaction() as connection:
         connection.execute(

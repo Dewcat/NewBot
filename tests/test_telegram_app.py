@@ -383,7 +383,7 @@ def test_enemy_skill_names_are_private_to_the_admin_callback(tmp_path: Path) -> 
         def battle_status(self) -> dict[str, Any]:
             return {
                 "id": 7,
-                "phase": BattlePhase.ENEMY_ACTION.value,
+                "phase": BattlePhase.ENEMY_PLANNING.value,
                 "participants": [
                     {
                         "id": 22,

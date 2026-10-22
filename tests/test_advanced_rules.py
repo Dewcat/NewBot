@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from conftest import lock_enemy_planning
+
 import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -382,17 +384,19 @@ def test_lethal_after_damage_hook_can_prevent_final_death(database: Database) ->
     hero = engine.spawn_character("unit.test.undying", Faction.FRIENDLY)
     enemy = engine.spawn_character("enemy.test.executioner", Faction.ENEMY)
     engine.start_battle([hero], [enemy])
+    execute = engine.list_skills(enemy)[0]
+    engine.use_skill(enemy, execute["id"], [hero])
+    lock_enemy_planning(engine)
     apply_skill = engine.list_skills(hero)[0]
     engine.use_skill(hero, apply_skill["id"])
     # 我方行动耗尽会自动移交敌方阶段；未耗尽时仍需手动移交。
     if engine.battle_status()["phase"] == "FRIENDLY_ACTION":
         engine.end_friendly_phase()
-    execute = engine.list_skills(enemy)[0]
-    result = engine.use_skill(enemy, execute["id"], [hero])
+    result = "\n".join(engine.end_turn())
 
     assert engine.get_character(hero)["current_hp"] == 1
-    assert "死亡判定被特殊记录改写" in result.text
-    assert "倒下了，退出战斗" not in result.text
+    assert "死亡判定被特殊记录改写" in result
+    assert "倒下了，退出战斗" not in result
     state = database.fetch_one(
         "SELECT params_json FROM active_effects WHERE character_id=? AND effect_key=?",
         (hero, "status.test_undying"),
@@ -427,6 +431,7 @@ def test_memory_database_is_shared_across_unit_of_work_connections() -> None:
 
 def test_select_target_rejects_more_than_one_selection(world: object) -> None:
     battle_id, _ = world.engine.start_battle([world.hero_id], [world.enemy_id])
+    lock_enemy_planning(world.engine)
     world.battle_id = battle_id
     skill_id = world.skill_ids["skill.test.wait"]
     with pytest.raises(BattleRuleError, match="只能指定一个"):
@@ -437,6 +442,7 @@ def test_select_target_rejects_more_than_one_selection(world: object) -> None:
 
 def test_changed_content_cannot_reload_during_active_battle(world: object) -> None:
     battle_id, _ = world.engine.start_battle([world.hero_id], [world.enemy_id])
+    lock_enemy_planning(world.engine)
     world.battle_id = battle_id
     assert ContentLoader(world.database).load_path(BASE_PACK).pack_key == "dewbot.base"
     changed = json.loads(BASE_PACK.read_text(encoding="utf-8"))
@@ -451,6 +457,7 @@ def test_multistage_battle_requires_explicit_next_stage_roster(world: object) ->
     battle_id, _ = world.engine.start_battle(
         [world.hero_id], [world.enemy_id], total_stages=2
     )
+    lock_enemy_planning(world.engine)
     world.battle_id = battle_id
     with world.database.transaction() as connection:
         connection.execute(
@@ -458,12 +465,15 @@ def test_multistage_battle_requires_explicit_next_stage_roster(world: object) ->
         )
     world.engine.end_friendly_phase()
     world.engine.end_turn()
+    lock_enemy_planning(world.engine)
     assert world.engine.battle_status()["phase"] == BattlePhase.STAGE_END.value
 
     with pytest.raises(BattleRuleError, match="至少需要"):
         world.engine.start_stage([world.hero_id], [])
+        lock_enemy_planning(world.engine)
     next_enemy = world.engine.spawn_character("enemy.test_dummy", Faction.ENEMY)
     world.engine.start_stage([world.hero_id], [next_enemy])
+    lock_enemy_planning(world.engine)
     status = world.engine.battle_status()
     assert status["current_stage"] == 2
     assert status["phase"] == BattlePhase.FRIENDLY_ACTION.value
@@ -481,6 +491,7 @@ def test_ego_is_reserved_before_recursive_skill_invocation(database: Database) -
     hero = engine.spawn_character("unit.test.ego_actor", Faction.FRIENDLY)
     enemy = engine.spawn_character("enemy.test.ego_target", Faction.ENEMY)
     battle_id, _ = engine.start_battle([hero], [enemy])
+    lock_enemy_planning(engine)
     with database.transaction() as connection:
         connection.execute(
             "UPDATE characters SET emotion_level=1 WHERE id=?", (hero,)
@@ -566,6 +577,7 @@ def test_hardblood_uses_independent_accumulating_amount(loaded_database: Databas
     hero = engine.spawn_character("unit.test.hardblood", Faction.FRIENDLY)
     enemy = engine.spawn_character("enemy.test_dummy", Faction.ENEMY)
     battle_id, _ = engine.start_battle([hero], [enemy])
+    lock_enemy_planning(engine)
     skills = {item["skill_key"]: item for item in engine.list_skills(hero)}
     engine.use_skill(hero, skills["skill.test.hardblood"]["id"])
     result = engine.use_skill(hero, skills["skill.test.hardblood"]["id"])
@@ -642,6 +654,7 @@ def test_heal_and_apply_effect_skip_dead_targets(loaded_database: Database) -> N
     hero = engine.spawn_character("unit.test_hero", Faction.FRIENDLY)
     enemy = engine.spawn_character("enemy.test_dummy", Faction.ENEMY)
     battle_id, _ = engine.start_battle([hero], [enemy])
+    lock_enemy_planning(engine)
     skills = {item["skill_key"]: item for item in engine.list_skills(hero)}
 
     result = engine.use_skill(hero, skills["skill.test.smite_mend"]["id"], [enemy])
@@ -732,6 +745,7 @@ def test_consume_resource_between_damage_behaviors_boosts_next_damage(
     hero = engine.spawn_character("unit.test.hardblood2", Faction.FRIENDLY)
     enemy = engine.spawn_character("enemy.test_dummy", Faction.ENEMY)
     engine.start_battle([hero], [enemy])
+    lock_enemy_planning(engine)
     skills = {item["skill_key"]: item for item in engine.list_skills(hero)}
     engine.use_skill(hero, skills["skill.test.hb_gather"]["id"])
 

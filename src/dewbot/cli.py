@@ -91,12 +91,17 @@ def main(argv: list[str] | None = None) -> int:
             enemy = engine.spawn_character(args.enemy, Faction.ENEMY)
             _battle_id, messages = engine.start_battle([friendly], [enemy])
             print("\n".join(messages))
+            if engine.battle_status()["phase"] == "ENEMY_PLANNING":
+                enemy_skill = engine.list_skills(enemy, available_only=True)[0]
+                print(engine.use_skill(enemy, enemy_skill["id"], [friendly]).text)
+                print(engine.finish_enemy_planning())
             skill = engine.list_skills(friendly, available_only=True)[0]
             print(engine.use_skill(friendly, skill["id"], [enemy]).text)
-            print(engine.end_friendly_phase())
-            enemy_skill = engine.list_skills(enemy, available_only=True)[0]
-            print(engine.use_skill(enemy, enemy_skill["id"], [friendly]).text)
-            print("\n".join(engine.end_turn()))
+            if engine.database.fetch_one("SELECT id FROM battles WHERE status='ACTIVE'"):
+                if engine.battle_status()["phase"] == "FRIENDLY_ACTION":
+                    print(engine.end_friendly_phase())
+                if engine.battle_status()["phase"] == "ENEMY_ACTION":
+                    print("\n".join(engine.end_turn()))
     except (BattleRuleError, ValueError, OSError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 2

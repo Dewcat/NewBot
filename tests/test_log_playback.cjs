@@ -1,0 +1,24 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');const source=fs.readFileSync('src/dewbot/web/static/app.js','utf8');
+const createLogPlayback=new Function(source.slice(source.indexOf('function createLogPlayback('),source.indexOf('const logPlayback ='))+';return createLogPlayback;')();
+let now=0,nextId=1;const timers=new Map(),seen=[];
+const schedule=(fn,delay)=>{const id=nextId++;timers.set(id,{fn,at:now+delay});return id};
+const advance=ms=>{const end=now+ms;while(true){const next=[...timers.entries()].filter(([,t])=>t.at<=end).sort((a,b)=>a[1].at-b[1].at)[0];if(!next)break;now=next[1].at;timers.delete(next[0]);next[1].fn()}now=end};
+const player=createLogPlayback(lines=>seen.push([now,lines]),schedule,id=>timers.delete(id));
+const attack=['木人｜使用「轻挥」','└ 露 承受 1d6=6 → 6 点伤害','── 露 的混乱条被击破，陷入混乱！'];
+const firstEffect=['◇ 「残光」触发：','└ 珏 获得2级「强壮」','└ 珏 获得1层2级「烧伤」'];
+const secondEffect=['◇ 「捕食」触发：','└ 露 获得2级「强壮」','└ 露 受到「捕食的代价」固定伤害：3'];
+// Boundaries must follow effects, regardless of how SSE strings contain newlines.
+player.enqueue([attack.join('\n'), ...firstEffect, secondEffect.join('\n'), '【回合结束】', '【第 2 回合】'],1500);
+assert.deepEqual(seen,[[0,attack]]);
+advance(1499);assert.equal(seen.length,1);
+advance(1);assert.deepEqual(seen[1],[1500,firstEffect]);
+player.enqueue(['后续新指令']);
+advance(6000);
+assert.deepEqual(seen,[[0,attack],[1500,firstEffect],[3000,secondEffect],[4500,['【回合结束】']],[6000,['【第 2 回合】']],[7500,['后续新指令']]]);
+player.enqueue(['不应继续显示'],1500);player.reset();advance(6000);assert.equal(seen.length,6);
+player.enqueue(['普通即时消息\n第二行']);assert.deepEqual(seen.at(-1)[1],['普通即时消息','第二行']);
+player.enqueue(['【回合结束】','└ 露 受到「烧伤」固定伤害：2','└ 珏 受到「中毒」固定伤害：3'],1500);
+advance(1500);assert.deepEqual(seen.at(-1)[1],['└ 露 受到「烧伤」固定伤害：2']);
+advance(1500);assert.deepEqual(seen.at(-1)[1],['└ 珏 受到「中毒」固定伤害：3']);
+console.log('Playback verified: whole effect blocks at 1500ms intervals, independent phase markers and standalone effects, FIFO ordering and reset cancellation.');

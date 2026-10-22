@@ -213,3 +213,10 @@ def world(loaded_database: Database) -> SimpleNamespace:
         enemy_id=enemy_id,
         skill_ids=skill_ids,
     )
+
+
+def lock_enemy_planning(engine):
+    """Explicitly skip enemy orders in tests concerned with other battle rules."""
+    battle = engine.database.fetch_one("SELECT phase FROM battles WHERE status='ACTIVE'")
+    if battle and battle["phase"] == "ENEMY_PLANNING":
+        engine.finish_enemy_planning()

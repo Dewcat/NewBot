@@ -33,6 +33,8 @@ class Narrator:
 
     @staticmethod
     def phase_changed(phase: BattlePhase) -> str:
+        if phase == BattlePhase.ENEMY_PLANNING:
+            return "敌方正在准备行动。"
         if phase == BattlePhase.FRIENDLY_ACTION:
             return "▣ 我方行动阶段"
         if phase == BattlePhase.ENEMY_ACTION:

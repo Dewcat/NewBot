@@ -2,8 +2,8 @@
   "pack": {
     "key": "dewbot.test_showcase",
     "name": "全功能演练包",
-    "version": "1.3.0",
-    "description": "2026-07-26 大改的验收关卡：伤害分档颜色、效果配色与新播报格式、助战先行、BOSS 标签、经理干预、书页卡组、发布确认与多阶段流程。",
+    "version": "1.4.0",
+    "description": "2026-07-26 大改的验收关卡：伤害分档颜色、效果配色与新播报格式、助战先行、BOSS 标签、经理干预、书页卡组、发布确认、多阶段流程与人格打桩测试。",
     "requires": [
       {
         "key": "dewbot.base",
@@ -311,6 +311,18 @@
       ]
     },
     {
+      "key": "enemy.showcase.persona_dummy",
+      "name": "人格测试木桩",
+      "description": "人格打桩专用：9999 HP、0 行动点，不会攻击；敌方阶段到来时自动跳过。",
+      "max_hp": 9999,
+      "max_actions": 0,
+      "max_stagger": 9999,
+      "tags": [
+        "机械"
+      ],
+      "skills": []
+    },
+    {
       "key": "enemy.showcase.puppet",
       "name": "演练·脆皮傀儡",
       "description": "低血量低混乱：验证混乱击破与倒下的抖动播报。",
@@ -560,6 +572,29 @@
     }
   ],
   "encounters": [
+    {
+      "key": "encounter.showcase.persona_dummy",
+      "name": "人格打桩测试",
+      "description": "单阶段人格测试场：一具 9999 HP、0 行动点的木桩，敌方回合自动跳过，适合持续测试人格技能、伤害与情感机制。",
+      "abnormalities": [],
+      "stages": [
+        {
+          "name": "人格打桩场",
+          "description": "木桩不会行动；击倒木桩即完成测试。",
+          "clear_when": {
+            "type": "ALL_ENEMIES_DEFEATED"
+          },
+          "on_clear": "VICTORY",
+          "enemies": [
+            {
+              "id": "persona_dummy",
+              "template": "enemy.showcase.persona_dummy",
+              "count": 1
+            }
+          ]
+        }
+      ]
+    },
     {
       "key": "encounter.showcase.full_drill",
       "name": "全功能演练",

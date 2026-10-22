@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>群体攻击预览</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body { display:block; margin:0; background:#25272c; color:#e5e8ee; }
+    .preview-controls { padding:20px; max-width:900px; margin:auto; }
+    .preview-controls h1 { font-size:20px; margin:0 0 12px; }
+    .preview-controls p { color:#b7beca; line-height:1.7; }
+    .preview-choices { display:flex; gap:8px; flex-wrap:wrap; }
+    .preview-choices button[aria-pressed="true"] { border-color:#e7c966; color:#ffe393; }
+    dialog { color:inherit; background:#292c33; border:1px solid #505765; border-radius:12px; width:min(600px,85vw); max-height:80dvh; }
+    dialog::backdrop { background:#0008; }
+  </style>
+</head>
+<body>
+  <div class="preview-controls">
+    <h1>群体攻击预览</h1>
+    <div class="preview-choices">
+      <button class="btn" data-scene="enemy" aria-pressed="true">敌方全体攻击</button>
+      <button class="btn" data-scene="all" aria-pressed="false">无差别攻击</button>
+      <button class="btn" data-scene="friendly" aria-pressed="false">我方群体攻击</button>
+      <button class="btn" data-scene="selected" aria-pressed="false">三个平等目标</button>
+    </div>
+    <p>悬停范围标记可展开目标连线，点击可固定或收起；点「详情」查看效果。珏已准备防御、露已准备闪避。此预览不改变当前战斗。</p>
+  </div>
+  <div id="battle-strip"></div>
+  <dialog id="detail"><h2></h2><div class="detail-body"></div><div class="detail-footer"></div></dialog>
+  <script>
+    const el = (tag, attrs, ...children) => {
+      const node = document.createElement(tag);
+      for (const [key,value] of Object.entries(attrs || {})) {
+        if (value == null) continue;
+        if (key.startsWith('on') && typeof value === 'function') node.addEventListener(key.slice(2),value);
+        else node.setAttribute(key,value);
+      }
+      for (const child of children.flat(Infinity)) if (child != null) node.append(child);
+      return node;
+    };
+    const dialog = document.getElementById('detail');
+    const closeModal = () => dialog.close();
+    const openModal = ({title}) => {
+      dialog.querySelector('h2').textContent=title;
+      dialog.querySelector('.detail-body').replaceChildren();
+      dialog.querySelector('.detail-footer').replaceChildren();
+      if (!dialog.open) dialog.showModal();
+      return {setBody:node=>dialog.querySelector('.detail-body').replaceChildren(node), setFooter:(...nodes)=>dialog.querySelector('.detail-footer').replaceChildren(...nodes)};
+    };
+    const chip = text => el('span',{class:'chip'},text);
+    const enemyIntentLabel = intent => intent.actor_name+' · '+intent.skill_name+' → '+intent.effective_target_names.join('、');
+    const unit = (id,name,faction) => ({id,name,faction,current_hp:150,max_hp:150,current_stagger:80,max_stagger:100});
+    const friends = ['珏','露','笙','曦','莹'].map((name,i)=>unit(i+1,name,'FRIENDLY'));
+    const foes = ['防御演练木人','人格测试木桩','防御演练木人'].map((name,i)=>unit(i+10,name,'ENEMY'));
+    const dom = {battleStrip:document.getElementById('battle-strip')};
+    (async () => {
+      // Reuse the actual battlefield renderer so this preview follows game changes.
+      const source = await (await fetch('/app.js')).text();
+      const details = new Function('openModal','el','chip','closeModal',source.slice(source.indexOf('function openEnemyIntentDetails('),source.indexOf('async function openDefenseWizard('))+';return openEnemyIntentDetails;')(openModal,el,chip,closeModal);
+      const render = new Function('dom','el','enemyIntentLabel','openEnemyIntentDetails','openModal','unitCard',source.slice(source.indexOf('function renderTargetMap('),source.indexOf('function renderBattleStrip('))+';return renderTargetMap;')(dom,el,enemyIntentLabel,details,openModal,u=>el('p',null,u.name+' · 生命 '+u.current_hp+'/'+u.max_hp));
+      function show(scene) {
+        const targets = scene==='all' ? [...friends,...foes] : scene==='selected' ? friends.slice(0,3) : friends;
+        const ids=targets.map(u=>u.id), names=targets.map(u=>u.name);
+        const intent={id:1,actor_id:10,actor_name:foes[0].name,skill_name:scene==='all'?'无差别震荡':'横扫',skill_description:'向范围内所有目标造成 1d6+4 点伤害。',status:'PENDING',effective_target_names:names,attack_target_ids:ids,area_target_ids:scene==='selected'?[]:ids,response_forecasts:{1:{tier:2,label:'均势'},2:{tier:3,label:'优势'}},skill_effects:[{timing:'ON',trigger_condition:'ALWAYS',effect_type:'DAMAGE',value:'1d6+4',target_names:names}]};
+        const battle={phase:'FRIENDLY_ACTION',defenses:[{actor_id:1,kind:'GUARD',active:true},{actor_id:2,kind:'EVADE',active:true}],enemy_intents:scene==='friendly'?[]:[intent],friendly_attacks:scene==='friendly'?[{actor_id:1,skill_name:'扫荡',target_ids:foes.map(u=>u.id),area_target_ids:foes.map(u=>u.id)}]:[]};
+        dom.battleStrip.replaceChildren();render(battle,foes,friends);
+        document.querySelectorAll('[data-scene]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.scene===scene)));
+      }
+      document.querySelectorAll('[data-scene]').forEach(button=>button.addEventListener('click',()=>show(button.dataset.scene)));
+      show('enemy');
+    })().catch(error=>dom.battleStrip.append(el('p',null,'预览加载失败：'+error.message)));
+  </script>
+</body>
+</html>

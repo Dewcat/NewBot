@@ -682,6 +682,16 @@ class ContentLoader:
                 if skill_key not in skill_keys:
                     raise ContentValidationError(f"{character['key']}: 技能不存在: {skill_key}")
 
+        for entry in [*characters, *personas]:
+            defense = entry.get("metadata", {}).get("defense_skill")
+            if defense is not None:
+                if not isinstance(defense, dict) or str(defense.get("kind", "GUARD")).upper() not in {"GUARD", "COUNTER", "EVADE", "INTERCEPT", "MEET"}:
+                    raise ContentValidationError(f"{entry.get('key')}: 防御类型无效")
+                try:
+                    roll_formula(str(defense.get("power", "1d6+4")), rng=random.Random(0))
+                except (ValueError, TypeError) as exc:
+                    raise ContentValidationError(f"{entry.get('key')}: 防御点数表达式无效") from exc
+
         core_names = {
             str(_required(item, "name", "core_character")).strip()
             for item in core_characters

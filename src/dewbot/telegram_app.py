@@ -70,6 +70,7 @@ PHASE_LABELS: dict[str, str] = {
     BattlePhase.BATTLE_START.value: "战斗开始",
     BattlePhase.STAGE_SELECTION.value: "阶段编成",
     BattlePhase.TURN_START.value: "回合开始",
+    BattlePhase.ENEMY_PLANNING.value: "敌方设置指令",
     BattlePhase.FRIENDLY_ACTION.value: "我方行动",
     BattlePhase.ENEMY_ACTION.value: "敌方行动",
     BattlePhase.TURN_END.value: "回合清算",
@@ -188,7 +189,7 @@ def _flow_key(side: str) -> str:
 
 
 def _expected_phase(side: str) -> BattlePhase:
-    return BattlePhase.FRIENDLY_ACTION if side == "f" else BattlePhase.ENEMY_ACTION
+    return BattlePhase.FRIENDLY_ACTION if side == "f" else BattlePhase.ENEMY_PLANNING
 
 
 def _side_faction(side: str) -> Faction:
@@ -516,7 +517,9 @@ class TelegramBattleAdapter:
 /start_stage <我方编号…> -- <敌方编号…> — 编成下一阶段〔管理；/stage_start 同义〕
 /battle — 查阅当前战斗档案
 /attack — 展开我方行动
-/enemy — 展开敌方行动〔管理；技能情报仅操作者可见〕
+/lock — 锁定敌方指令并交给玩家〔管理〕
+/defend 角色编号 [指令编号] — 发布人格防御指令
+/enemy — 设置敌方技能与目标〔管理；技能情报仅操作者可见〕
 /end_friendly_phase — 移交敌方行动权〔管理〕
 /end_turn — 完成敌方阶段并统一清算〔管理〕
 /end_battle — 中止当前战斗〔管理；/battle_abort 同义〕
@@ -2192,6 +2195,31 @@ class TelegramBattleAdapter:
         except Exception as exc:
             await self._command_error(update, exc)
 
+    async def lock_intents_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._require_admin(update):
+            return
+        try:
+            async with self._mutation_lock:
+                message = await asyncio.to_thread(self.engine.finish_enemy_planning)
+            await self._reply(update, message)
+        except Exception as exc:
+            await self._command_error(update, exc)
+
+    async def defend_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            if not context.args or len(context.args) > 2:
+                raise BattleRuleError("用法：/defend 角色编号 [敌方指令编号]；拦截与迎击需要指令编号。")
+            actor_id = int(context.args[0])
+            actor = await asyncio.to_thread(self.engine.get_character, actor_id)
+            if not int(actor["is_core"]) and not await self._require_admin(update):
+                return
+            intent_id = int(context.args[1]) if len(context.args) == 2 else None
+            async with self._mutation_lock:
+                messages = await asyncio.to_thread(self.engine.declare_defense, actor_id, intent_id)
+            await self._reply(update, "\n".join(messages))
+        except Exception as exc:
+            await self._command_error(update, exc)
+
     async def end_friendly_phase_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -2549,7 +2577,9 @@ class TelegramBattleAdapter:
 /identity — 用按钮为核心角色切换战斗外人格
 /create [名称] — 用按钮建立可加入编成的普通友方
 /next — 勾选我方阵容后进入下一阶段
-/enemy — 展开敌方行动（技能信息仅操作者可见）
+/lock — 锁定敌方指令并交给玩家〔管理〕
+/defend 角色编号 [指令编号] — 发布人格防御指令
+/enemy — 设置敌方技能与目标（技能信息仅操作者可见）
 /yield — 助战让行（放弃助战剩余行动，轮到玩家核心）〔管理〕
 /pass — 结束回合，行动权移交敌方（玩家可用）
 /settle — 进行回合结束结算
@@ -3226,6 +3256,12 @@ class TelegramBattleAdapter:
             f"阶段 {status['current_stage']}/{status['total_stages']}｜"
             f"回合 {status['current_turn']}｜当前：{phase}",
         ]
+        for intent in status.get("enemy_intents", []):
+            lines.append(f"{intent['actor_name']} · {intent['skill_name']} → " + "、".join(intent.get("effective_target_names", intent["target_names"])) + (f"（被{intent['redirect']['actor_name']}{intent['redirect']['label']}）" if intent.get("redirect") else "") + ("〔已混乱或倒下，将取消〕" if intent["disabled"] else ""))
+            if intent.get("additional_target_names"):
+                lines.append("  附加目标：" + "、".join(intent["additional_target_names"]))
+        for defense in status.get("defenses", []):
+            lines.append(f"防御：角色 #{defense['actor_id']} · {defense['kind']}" + (f" → 指令 #{defense['intent_id']}" if defense['intent_id'] else ""))
         for faction, title in (
             (Faction.FRIENDLY.value, "我方记录"),
             (Faction.ENEMY.value, "敌方记录"),
@@ -3490,6 +3526,8 @@ def create_application(
         CallbackQueryHandler(adapter.gear_callback, pattern=r"^dw:g:")
     )
     application.add_handler(CommandHandler("battle", adapter.battle_command))
+    application.add_handler(CommandHandler("lock", adapter.lock_intents_command))
+    application.add_handler(CommandHandler("defend", adapter.defend_command))
     application.add_handler(_attack_conversation(adapter, "f"))
     application.add_handler(_attack_conversation(adapter, "e"))
     application.add_handler(

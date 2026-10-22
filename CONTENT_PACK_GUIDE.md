@@ -1,3 +1,5 @@
+> 当前回合顺序与人格防御配置以 [回合指令规则](TURN_COMMANDS.md) 为准：敌方先设置技能与目标，玩家攻击立即结算，防御在敌方攻击阶段结算。
+
 # Dewbot v2 内容包扩展指南
 
 本项目把“规则执行”和“游戏内容”分开：Python 引擎负责回合、时机、目标、冷却、情感、状态生命周期和事务；JSON 内容包负责角色、人格、技能、效果、异想体书页与管理人能力。绝大多数新增内容不需要改表，也不需要复制一份战斗代码。
@@ -79,6 +81,7 @@ python -m dewbot.cli load-content content/example_extension.json
 ## 3. 新增角色、人格与 EGO
 
 - `characters[]` 只定义可重复生成的普通单位/敌人模板；`characters[].skills` 是生成单位直接拥有的技能。
+- 生成模板允许 `max_actions: 0`，用于不会行动且敌方阶段自动跳过的木桩/场景单位；`core_characters[]` 与人格的 `max_actions` 仍必须为正整数。
 - `core_characters[]` 会直接幂等写入 `characters` 表，不经过模板、角色本体表或 `role_key`。核心角色以名称作为内容声明中的稳定身份。
 - 顶层 `personas[]` 使用 `character` 指定核心角色名称；数据库中的 `personas.character_id` 直接外键关联实际角色。
 - 人格保存绝对的 `max_hp`、`max_actions`、`max_stagger` 与普通技能组。切换人格会直接覆盖角色当前战斗数据；`default: true` 表示未装备特殊人格时使用的初始人格。
