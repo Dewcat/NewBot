@@ -96,6 +96,8 @@ python -m dewbot.cli simulate
 
 ## 架构
 
+可选的[故事档案](STORY_ARCHIVE_GUIDE.md)默认关闭。设置 `DEWBOT_STORY_ENABLED=1` 后，可在 Web 中整理设定、事件和线索，按世界线、确认状态与公开范围区分，并通过 Telegram `/story` 查阅。档案使用独立数据库，不参与战斗结算。
+
 - `schema.py` / `db.py`：版本化、并发安全的 SQLite 迁移和事务边界。
 - `content.py`：幂等内容包、跨包依赖、所有权、反向依赖与语义校验。
 - `engine.py`：阶段状态机、五段技能时机、目标解析、事件钩子、效果、情感、EGO 和日志。

@@ -296,6 +296,10 @@ def create_app(
     app.state.sse_clients = sse_clients
     chat_store = ChatStore(engine.database)
     app.state.chat_store = chat_store
+    from ..story import open_story_store
+
+    story_store = open_story_store(settings)
+    app.state.story_store = story_store
 
     # -- 错误统一整形 ----------------------------------------------------
     @app.exception_handler(ApiError)
@@ -457,7 +461,7 @@ def create_app(
             await asyncio.sleep(LOGIN_FAILURE_DELAY_SECONDS)
             raise ApiError(401, "访问密钥不正确。")
         login_failures.pop(ip, None)
-        response = JSONResponse({"role": role})
+        response = JSONResponse({"role": role, **({"story_enabled": True} if story_store else {})})
         response.set_cookie(
             COOKIE_NAME,
             key,
@@ -490,7 +494,7 @@ def create_app(
             }
 
         state = await _read(_state)
-        return {"role": role, **state}
+        return {"role": role, **state, **({"story_enabled": True} if story_store else {})}
 
     @app.get("/api/overview")
     async def overview(request: Request) -> dict[str, Any]:
@@ -1404,6 +1408,11 @@ def create_app(
         messages = await _locked(_do)
         _notify(messages)
         return {"messages": messages}
+
+    if story_store is not None:
+        from .story_routes import install_story_routes
+
+        install_story_routes(app, story_store, _require_role, _require_gm)
 
     # -- 静态托管（GET / 与前端资源；目录可能由并行开发补齐） -------------
     @app.get("/", include_in_schema=False)

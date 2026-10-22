@@ -3265,6 +3265,8 @@ function setRole(role) {
 }
 
 function enterLogin() {
+  const storyLink = byId('story-archive-link');
+  if (storyLink) storyLink.classList.add('hidden');
   state.loggedIn = false;
   state.role = null;
   closeSSE();
@@ -3278,7 +3280,9 @@ function enterLogin() {
   }
 }
 
-async function enterApp(role) {
+async function enterApp(role, storyEnabled = false) {
+  const storyLink = byId('story-archive-link');
+  if (storyLink) storyLink.classList.toggle('hidden', !storyEnabled);
   setRole(role === 'gm' ? 'gm' : 'player');
   state.loggedIn = true;
   state.view = 'battle';
@@ -3326,7 +3330,7 @@ function bindStaticHandlers() {
       if (dom.loginSubmit) { dom.loginSubmit.disabled = true; dom.loginSubmit.classList.add('is-busy'); }
       try {
         const data = await api('/api/login', { method: 'POST', body: { key } });
-        await enterApp(data && data.role);
+        await enterApp(data && data.role, !!(data && data.story_enabled));
       } catch (err) {
         toast((err && err.message) || '登录失败', 'error');
         if (dom.loginCard) {
@@ -3398,7 +3402,7 @@ async function init() {
   try {
     const session = await api('/api/session');
     if (session && (session.role === 'gm' || session.role === 'player')) {
-      await enterApp(session.role);
+      await enterApp(session.role, !!session.story_enabled);
       return;
     }
   } catch (err) { /* 未登录 → 落到登录页 */ }

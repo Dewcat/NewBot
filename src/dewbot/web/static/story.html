@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>故事档案 · Dewbot</title>
+  <link rel="stylesheet" href="story.css">
+</head>
+<body>
+  <main>
+    <header><div><p class="eyebrow">DEWBOT / STORY ARCHIVE</p><h1>故事档案</h1></div><a href="/">返回故事与战斗</a></header>
+    <p id="audience">正在检查登录状态…</p>
+    <p id="notice" role="status"></p>
+    <section id="controls" hidden>
+      <form id="search-form" class="toolbar">
+        <label>搜索<input name="q" placeholder="角色、线索或正文关键词" maxlength="200"></label>
+        <label>世界线<input name="world" placeholder="留空查看全部；输入名称精确筛选" maxlength="80"></label>
+        <label id="status-filter-label" hidden>设定状态<select name="status"><option value="">全部</option><option value="confirmed">已确认</option><option value="draft">待定</option><option value="withdrawn">已撤回</option></select></label>
+        <button type="submit">搜索 / 刷新</button>
+      </form>
+      <div class="actions"><button id="create" hidden>新增条目</button><button id="export">导出当前身份可见档案</button></div>
+    </section>
+    <section id="entries" aria-label="档案条目"></section>
+    <button id="more" hidden>加载更多</button>
+  </main>
+  <dialog id="editor">
+    <form id="edit-form">
+      <h2 id="edit-heading">新增条目</h2>
+      <label>标题<input name="title" required maxlength="120"></label>
+      <div class="columns">
+        <label>类型<select name="kind"><option value="lore">设定</option><option value="character">角色</option><option value="event">事件</option><option value="clue">线索</option></select></label>
+        <label>世界线<input name="world" required maxlength="80" value="主世界"></label>
+        <label>篇章 / 场景<input name="chapter" maxlength="120"></label>
+      </div>
+      <div class="columns">
+        <label>设定状态<select name="status"><option value="draft">待定</option><option value="confirmed">已确认</option><option value="withdrawn">已撤回</option></select></label>
+        <label>可见范围<select name="visibility"><option value="gm">仅管理人</option><option value="public">玩家可见</option></select></label>
+      </div>
+      <p class="hint">已确认不等于已经揭晓。只有“已确认 + 玩家可见”会出现在玩家档案与群聊查询中。</p>
+      <label>正文<textarea name="body" required maxlength="20000" rows="12"></textarea></label>
+      <label>来源备注（始终仅管理人可见）<textarea name="source" maxlength="2000" rows="3" placeholder="例如：作者确认日期、讨论出处、尚待核对的记录"></textarea></label>
+      <p id="edit-error" role="alert"></p>
+      <div class="actions"><button id="save" type="submit">保存</button><button id="cancel" type="button">取消</button></div>
+    </form>
+  </dialog>
+  <script src="story.js"></script>
+</body>
+</html>
