@@ -29,6 +29,9 @@ ENV/
 # Dewbot v2 runtime databases
 src/data/dewbot*.db
 src/data/dewbot*.db-*
+src/data/*.story.db
+src/data/*.story.db-*
+src/*.egg-info/
 
 # 运行时锁与测试临时产物
 src/data/*.frontend.lock

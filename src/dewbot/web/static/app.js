@@ -407,6 +407,7 @@ function connectSSE() {
     // 先拿总览建立"名字→阵营"映射，再回放历史：否则我方播报会认不出阵营靠左。
     try { await refreshOverview(); } catch (err) { /* 401 等由 api() 统一处理 */ }
     loadChannelHistory();
+    refreshPrivacy();
   });
   source.addEventListener('log', (event) => {
     let payload = null;
@@ -419,6 +420,10 @@ function connectSSE() {
     let payload = null;
     try { payload = JSON.parse(event.data); } catch (err) { return; }
     if (payload && payload.message) appendChatMessage(payload.message);
+  });
+  source.addEventListener('privacy', (event) => {
+    try { applyPrivacy(JSON.parse(event.data)); } catch (err) { return; }
+    loadChannelHistory();
   });
   source.addEventListener('setup_published', (event) => {
     let payload = null;
@@ -632,7 +637,8 @@ function buildChatBubble(msg) {
     ? el('span', { class: 'chat-read' + (otherRoleHasRead(msg) ? ' seen' : '') },
         otherRoleHasRead(msg) ? '✓✓' : '✓')
     : null;
-  const menuBtn = mine ? el('button', {
+  const privacyMark = toInt(msg.ai_excluded, 1) ? el('span', { class: 'chat-edited' }, '不用于 AI') : null;
+  const menuBtn = mine || state.role === 'gm' ? el('button', {
     class: 'chat-menu-btn', type: 'button', title: '编辑或撤回',
     onclick: () => openChatMenu(msg),
   }, '···') : null;
@@ -640,13 +646,13 @@ function buildChatBubble(msg) {
   if (msg.kind === 'narration') {
     return el('div', { class: 'bubble chat-narration' },
       el('div', { class: 'chat-text' }, msg.content),
-      el('div', { class: 'chat-meta' }, time, editedMark, readMark, menuBtn));
+      el('div', { class: 'chat-meta' }, time, editedMark, privacyMark, readMark, menuBtn));
   }
   const side = mine ? 'chat-mine' : 'chat-theirs';
   return el('div', { class: 'bubble chat-speech ' + side },
     el('div', { class: 'chat-head' }, msg.speaker || (msg.author_role === 'gm' ? 'NPC' : '玩家')),
     el('div', { class: 'chat-text' }, msg.content),
-    el('div', { class: 'chat-meta' }, time, editedMark, readMark, menuBtn));
+    el('div', { class: 'chat-meta' }, time, editedMark, privacyMark, readMark, menuBtn));
 }
 
 function appendChatMessage(msg) {
@@ -702,13 +708,24 @@ function openChatMenu(msg) {
   const editBtn = el('button', { class: 'btn ghost block', type: 'button' }, '编辑');
   editBtn.addEventListener('click', () => openChatEdit(msg));
   const revokeBtn = el('button', { class: 'btn danger block', type: 'button', style: 'margin-top:8px' }, '撤回');
+  editBtn.classList.toggle('hidden', msg.author_role !== state.role);
+  revokeBtn.classList.toggle('hidden', msg.author_role !== state.role);
   revokeBtn.addEventListener('click', () => withBusy(revokeBtn, async () => {
     await api('/api/chat/' + msg.id + '/revoke', { method: 'POST', body: {} });
     closeModal();
   }));
+  const protectBtn = state.role === 'gm' && !toInt(msg.ai_excluded, 1) ? el('button', {
+    class: 'btn ghost block', type: 'button', style: 'margin-top:8px',
+    onclick: async () => {
+      try {
+        await api('/api/assistant/protect', {method:'POST',body:{message_ids:[msg.id]}});
+        closeModal(); await loadChannelHistory();
+      } catch (err) { toast(err.message, 'error'); }
+    },
+  }, '永久排除出 AI 上下文') : null;
   modal.setBody(el('div', null,
     el('div', { class: 'wizard-subtitle' }, '「' + String(msg.content || '').slice(0, 60) + '」'),
-    editBtn, revokeBtn));
+    editBtn, revokeBtn, protectBtn));
   modal.setFooter(el('button', { class: 'btn ghost', type: 'button', onclick: closeModal }, '取消'));
 }
 
@@ -3264,7 +3281,29 @@ function setRole(role) {
   }
 }
 
+let privacyEnabled = true;
+function applyPrivacy(value) {
+  privacyEnabled = !!value.enabled;
+  const button = byId('privacy-mode');
+  if (!button) return;
+  button.textContent = privacyEnabled ? '隐私模式：开' : '隐私模式：关';
+  button.disabled = state.role !== 'gm';
+  button.setAttribute('aria-pressed', String(privacyEnabled));
+  button.title = privacyEnabled ? '当前聊天不用于 AI；关闭后也不会补发这些记录。' : '仅管理人选中并预览的材料可提供给 AI。';
+}
+async function refreshPrivacy() {
+  try { applyPrivacy(await api('/api/assistant/privacy')); }
+  catch (err) {
+    const button = byId('privacy-mode');
+    if (button) { button.textContent = '隐私状态未知'; button.disabled = true; }
+  }
+}
+
 function enterLogin() {
+  const writingLink = byId('writing-link');
+  if (writingLink) writingLink.classList.add('hidden');
+  const storyLink = byId('story-archive-link');
+  if (storyLink) storyLink.classList.add('hidden');
   state.loggedIn = false;
   state.role = null;
   closeSSE();
@@ -3278,8 +3317,13 @@ function enterLogin() {
   }
 }
 
-async function enterApp(role) {
+async function enterApp(role, storyEnabled = false) {
+  const storyLink = byId('story-archive-link');
+  if (storyLink) storyLink.classList.toggle('hidden', !storyEnabled);
   setRole(role === 'gm' ? 'gm' : 'player');
+  const writingLink = byId('writing-link');
+  if (writingLink) writingLink.classList.toggle('hidden', state.role !== 'gm');
+  await refreshPrivacy();
   state.loggedIn = true;
   state.view = 'battle';
   if (dom.loginView) dom.loginView.classList.add('hidden');
@@ -3295,6 +3339,11 @@ async function enterApp(role) {
 /* ================= 初始化 ================= */
 
 function bindStaticHandlers() {
+  const privacyButton = byId('privacy-mode');
+  if (privacyButton) privacyButton.addEventListener('click', () => withBusy(privacyButton, async () => {
+    applyPrivacy(await api('/api/assistant/privacy', {method:'PUT',body:{enabled:!privacyEnabled}}));
+  }));
+  window.addEventListener('focus', () => {if (state.loggedIn) refreshPrivacy();});
   if (dom.chatSend) dom.chatSend.addEventListener('click', sendChat);
   if (dom.chatInput) {
     dom.chatInput.addEventListener('keydown', (event) => {
@@ -3326,7 +3375,7 @@ function bindStaticHandlers() {
       if (dom.loginSubmit) { dom.loginSubmit.disabled = true; dom.loginSubmit.classList.add('is-busy'); }
       try {
         const data = await api('/api/login', { method: 'POST', body: { key } });
-        await enterApp(data && data.role);
+        await enterApp(data && data.role, !!(data && data.story_enabled));
       } catch (err) {
         toast((err && err.message) || '登录失败', 'error');
         if (dom.loginCard) {
@@ -3398,7 +3447,7 @@ async function init() {
   try {
     const session = await api('/api/session');
     if (session && (session.role === 'gm' || session.role === 'player')) {
-      await enterApp(session.role);
+      await enterApp(session.role, !!session.story_enabled);
       return;
     }
   } catch (err) { /* 未登录 → 落到登录页 */ }

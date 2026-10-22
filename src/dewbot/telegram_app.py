@@ -3410,7 +3410,7 @@ def _attack_conversation(
 
 async def _register_bot_commands(application: Application) -> None:
     """Publish the short, human-facing command menu after Telegram connects."""
-    await application.bot.set_my_commands([
+    commands = [
         BotCommand("start", "显示系统状态与入门提示"),
         BotCommand("help", "查看指令与战斗流程"),
         BotCommand("whoami", "显示用户编号与管理权限"),
@@ -3439,7 +3439,11 @@ async def _register_bot_commands(application: Application) -> None:
         BotCommand("manager", "查看管理人能力"),
         BotCommand("stop", "确认中止当前战斗"),
         BotCommand("reload", "重新载入内容包"),
-    ])
+        BotCommand("privacy", "查看或切换 AI 隐私模式"),
+    ]
+    if application.bot_data.get("story_store") is not None:
+        commands.append(BotCommand("notes", "查看已解锁的但丁笔记"))
+    await application.bot.set_my_commands(commands)
 
 
 def create_application(
@@ -3490,6 +3494,23 @@ def create_application(
     application.bot_data["battle_engine"] = engine
     application.bot_data["content_loader"] = loader
     application.bot_data["telegram_adapter"] = adapter
+
+    from .assistant import PrivacyStore
+    from .assistant_telegram import PrivacyTelegramAdapter
+
+    privacy_adapter = PrivacyTelegramAdapter(PrivacyStore(engine.database), settings.admin_ids)
+    application.add_handler(CommandHandler("privacy", privacy_adapter.privacy_command))
+
+    from .story import open_story_store
+
+    story_store = open_story_store(settings)
+    if story_store is not None:
+        from .story_telegram import StoryTelegramAdapter
+
+        story_adapter = StoryTelegramAdapter(story_store, settings.admin_ids)
+        application.bot_data["story_store"] = story_store
+        application.add_handler(CommandHandler("story", story_adapter.story_command))
+        application.add_handler(CommandHandler("notes", story_adapter.story_command))
 
     application.add_handler(CommandHandler("start", adapter.start_command))
     application.add_handler(CommandHandler("help", adapter.help_command))

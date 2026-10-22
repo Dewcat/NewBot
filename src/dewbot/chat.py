@@ -71,8 +71,8 @@ class ChatStore:
                 f"""
                 INSERT INTO chat_messages(
                     author_role,kind,speaker,content,
-                    read_by_gm,read_by_player
-                ) VALUES(?,?,?,?,?,?)
+                    read_by_gm,read_by_player,ai_excluded
+                ) VALUES(?,?,?,?,?,?,(SELECT enabled FROM ai_privacy WHERE id=1))
                 """,
                 (
                     author_role, kind, speaker, content,
@@ -114,11 +114,13 @@ class ChatStore:
             connection.execute(
                 """
                 UPDATE chat_messages
-                SET content=?,speaker=?,kind=?,edited_at=CURRENT_TIMESTAMP
+                SET content=?,speaker=?,kind=?,edited_at=CURRENT_TIMESTAMP,
+                    ai_excluded=MAX(ai_excluded,(SELECT enabled FROM ai_privacy WHERE id=1))
                 WHERE id=?
                 """,
                 (content, speaker, kind, int(message_id)),
             )
+            connection.execute("UPDATE ai_privacy SET epoch=epoch+1 WHERE id=1")
             updated = connection.execute(
                 "SELECT * FROM chat_messages WHERE id=?", (int(message_id),)
             ).fetchone()
@@ -137,6 +139,7 @@ class ChatStore:
                 "UPDATE chat_messages SET revoked=1,content='' WHERE id=?",
                 (int(message_id),),
             )
+            connection.execute("UPDATE ai_privacy SET epoch=epoch+1 WHERE id=1")
             updated = connection.execute(
                 "SELECT * FROM chat_messages WHERE id=?", (int(message_id),)
             ).fetchone()

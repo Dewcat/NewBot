@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI 写作 · Dewbot</title><link rel="stylesheet" href="story.css"></head>
+<body><main>
+  <header><div><p class="eyebrow">DEWBOT / WRITING DESK</p><h1>AI 写作</h1></div><a href="/">返回战斗</a></header>
+  <p id="notice" role="status">正在检查管理人身份…</p>
+  <section id="desk" hidden>
+    <div class="actions"><button id="privacy" type="button">隐私状态检查中</button><span id="provider" class="hint"></span></div>
+    <p class="hint">开启隐私模式会暂停 AI 预览、导出与生成。开启期间发送或编辑的聊天永久排除，关闭后也不会补发。已发送到外部服务的材料无法撤回。</p>
+    <div class="columns">
+      <section><h2>选择聊天片段</h2><p class="hint">仅列出可供选择的记录，默认一条也不发送。</p><div id="messages" class="writing-scroll"></div><button id="more-messages" hidden>更多聊天</button></section>
+      <section><h2>选择笔记</h2><p class="hint">仅列出已解锁且勾选“允许 AI”的笔记。可在<a href="story.html" target="_blank" rel="noopener">但丁笔记</a>中调整。</p><div id="notes" class="writing-scroll"></div><button id="more-notes" hidden>更多笔记</button></section>
+    </div>
+    <div class="actions"><button id="refresh">刷新材料</button><button id="protect">将选中聊天永久排除出 AI</button></div>
+    <label>写作要求<textarea id="instruction" rows="4" maxlength="4000" placeholder="例如：根据所选片段，写三种接下来的对话走向。"></textarea></label>
+    <div class="actions"><button id="preview">预览实际发送内容</button><button id="export" disabled>导出给 Codex / 其他 AI</button><button id="generate" disabled>调用模型生成草稿</button></div>
+    <p id="counts" class="hint"></p>
+    <details id="preview-box"><summary>本次完整材料</summary><pre id="preview-text" class="body"></pre></details>
+    <section><h2>候选草稿</h2><p class="hint">草稿只在此显示。由你决定如何使用，不会自动发到聊天或修改笔记。</p><pre id="draft" class="body"></pre></section>
+  </section>
+</main><script src="assistant.js"></script></body>
+</html>

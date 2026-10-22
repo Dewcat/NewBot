@@ -96,6 +96,10 @@ python -m dewbot.cli simulate
 
 ## 架构
 
+可选的[但丁笔记](STORY_ARCHIVE_GUIDE.md)默认关闭。设置 `DEWBOT_STORY_ENABLED=1` 后，管理人可安排条目的剧情解锁进度，玩家通过 Web 或 Telegram `/notes` 查阅。初始进度为第四章第一部分结束（东柏刺伤李箱），笔记使用独立数据库，不参与战斗结算。
+
+[AI 写作与隐私模式](AI_PRIVACY_GUIDE.md)：管理人可随时切换隐私模式，开启期间的聊天永久排除出 AI 上下文。写作需先选择并预览材料，再调用模型 API 或导出给 Codex 等工具；玩家可见范围与 AI 许可分别控制。升级前历史默认排除，未配置 API 也可导出。
+
 - `schema.py` / `db.py`：版本化、并发安全的 SQLite 迁移和事务边界。
 - `content.py`：幂等内容包、跨包依赖、所有权、反向依赖与语义校验。
 - `engine.py`：阶段状态机、五段技能时机、目标解析、事件钩子、效果、情感、EGO 和日志。
